@@ -11,7 +11,7 @@ from arastirma.web_arastirici import WebArastirici
 
 
 class CumleMotoruV2:
-    """Gerçek Türkçe kullanım cümlelerini birden fazla kanaldan toplar."""
+    """Gerçek Türkçe kullanım cümlelerini birden fazla güvenilir kanaldan toplar."""
 
     def __init__(self):
         self.web = WebArastirici(timeout=12, max_results=8)
@@ -19,11 +19,26 @@ class CumleMotoruV2:
     async def research(self, word, research, usage):
         candidates, seen = [], set()
 
-        for sentence in await self._tatoeba_sentences(word):
-            self._add_sentence(word, sentence, candidates, seen, "tatoeba", "https://tatoeba.org/")
+        # 1) Tatoeba API v1 + eski API yedeği.
+        for sentence, url in await self._tatoeba_sentences(word):
+            self._add_sentence(word, sentence, candidates, seen, "tatoeba", url)
             if len(candidates) >= 15:
                 return candidates[:15]
 
+        # 2) Türkçe sözlük API'lerindeki gerçek example alanları.
+        for sentence, url in await self._dictionary_examples(word):
+            self._add_sentence(word, sentence, candidates, seen, "dictionary_example", url)
+            if len(candidates) >= 15:
+                return candidates[:15]
+
+        # 3) Türkçe Vikisözlük sayfasındaki örnek cümleler.
+        for sentence, url in await self._wiktionary_examples(word):
+            self._add_sentence(word, sentence, candidates, seen, "vikisozluk_example", url)
+            if len(candidates) >= 15:
+                return candidates[:15]
+
+        # 4) Web araması. Arama motoru sonuç vermese bile üstteki kaynaklar
+        # bağımsız çalışır; başlıklar burada cümle olarak kullanılmaz.
         if len(candidates) < 6:
             for query in (
                 f'"{word}" "örnek cümle"',
@@ -36,11 +51,17 @@ class CumleMotoruV2:
                 for result in data.get("results", []):
                     if not isinstance(result, dict):
                         continue
-                    text = result.get("snippet", "") or result.get("title", "")
-                    self._extract_from_text(word, text, candidates, seen, "web_sentence_research", result.get("url", ""))
+                    snippet = result.get("snippet", "") or ""
+                    if not snippet:
+                        continue
+                    self._extract_from_text(
+                        word, snippet, candidates, seen,
+                        "web_sentence_research", result.get("url", ""),
+                    )
                     if len(candidates) >= 15:
                         return candidates[:15]
 
+        # 5) Araştırma kaynaklarında açıkça belirtilmiş örnek cümleler.
         if len(candidates) < 3 and isinstance(research, dict):
             for result in research.get("sources", []) or []:
                 if not isinstance(result, dict):
@@ -52,6 +73,7 @@ class CumleMotoruV2:
                 if len(candidates) >= 15:
                     return candidates[:15]
 
+        # 6) Kullanım bağlamı son yedektir; başlık değil, sadece metin kullanılır.
         if len(candidates) < 3:
             contexts = usage.get("contexts", []) if isinstance(usage, dict) else []
             for context in contexts:
@@ -63,46 +85,113 @@ class CumleMotoruV2:
 
     async def _tatoeba_sentences(self, word):
         urls = (
-            "https://api.tatoeba.org/v1/sentences?"
-            f"lang=tur&q={quote_plus(word)}&limit=50",
-            "https://api.tatoeba.org/v1/sentences?"
-            f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50",
-            "https://api.tatoeba.org/v1/sentences?"
-            f"lang=tur&q=%3D{quote_plus(word)}&limit=50",
+            (
+                "https://api.tatoeba.org/v1/sentences?"
+                f"lang=tur&q={quote_plus(word)}&limit=50",
+                "https://api.tatoeba.org/",
+            ),
+            (
+                "https://api.tatoeba.org/v1/sentences?"
+                f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50",
+                "https://api.tatoeba.org/",
+            ),
+            (
+                "https://tatoeba.org/eng/api_v0/search?"
+                f"from=tur&query={quote_plus(word)}&limit=50",
+                "https://tatoeba.org/",
+            ),
         )
-        for url in urls:
+        for url, source_url in urls:
             try:
                 payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
-                items = payload.get("data", []) if isinstance(payload, dict) else []
+                items = payload.get("data", []) if isinstance(payload, dict) else payload
+                if not isinstance(items, list):
+                    continue
                 values = []
                 for item in items:
                     if not isinstance(item, dict):
                         continue
                     text = item.get("text") or item.get("sentence") or ""
                     if text:
-                        values.append(text)
+                        values.append((text, source_url))
                 if values:
                     return values
             except Exception:
                 continue
         return []
 
+    async def _dictionary_examples(self, word):
+        """Dictionary API'deki example alanlarını doğrudan toplar."""
+        try:
+            url = f"https://api.dictionaryapi.dev/api/v2/entries/tr/{quote_plus(word)}"
+            payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
+            values = []
+            for entry in payload if isinstance(payload, list) else []:
+                for meaning in entry.get("meanings", []) or []:
+                    for definition in meaning.get("definitions", []) or []:
+                        example = self._clean_text(definition.get("example", ""))
+                        if example:
+                            values.append((example, "https://api.dictionaryapi.dev/"))
+            return values
+        except Exception:
+            return []
+
+    async def _wiktionary_examples(self, word):
+        """Türkçe Vikisözlük maddesinden açık örnek cümleleri çıkarır."""
+        try:
+            url = (
+                "https://tr.wiktionary.org/w/api.php?action=query&prop=extracts"
+                f"&explaintext=1&titles={quote_plus(word)}&format=json&utf8=1"
+            )
+            payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
+            pages = payload.get("query", {}).get("pages", {})
+            values = []
+            for page in pages.values():
+                extract = page.get("extract", "") if isinstance(page, dict) else ""
+                if not extract:
+                    continue
+                for line in re.split(r"\n+", extract):
+                    line = self._clean_text(line)
+                    if not line:
+                        continue
+                    # Vikisözlükte örnek bölümlerini hedefle; tanım satırlarını
+                    # doğrudan cümle diye kabul etme.
+                    if re.search(r"(?:örnek|örnekler|kullanım)", line, re.I):
+                        self._extract_from_text(
+                            word, line, values_as_candidates := [], set(),
+                            "vikisozluk_example", "https://tr.wiktionary.org/"
+                        )
+                        for item in values_as_candidates:
+                            values.append((item["sentence"], "https://tr.wiktionary.org/"))
+            return values
+        except Exception:
+            return []
+
     @staticmethod
     def _fetch_json(url):
-        request = Request(url, headers={
-            "User-Agent": "FatosKelimeOgrenmeTest/1.1",
-            "Accept": "application/json",
-            "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
-        })
+        request = Request(
+            url,
+            headers={
+                "User-Agent": "FatosKelimeOgrenmeTest/1.2",
+                "Accept": "application/json",
+                "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
+            },
+        )
         with urlopen(request, timeout=10) as response:
             return response.read().decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _clean_text(value):
+        text = html.unescape(str(value or ""))
+        text = re.sub(r"<[^>]+>", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
 
     def _extract_research_examples(self, word, text, candidates, seen, source, url=""):
         if not text:
             return
-        text = html.unescape(str(text))
+        text = self._clean_text(text)
         matches = re.findall(
-            r"(?:örnek|example|örnek cümle|örnek kullanım)\s*[:\-–—]\s*(.+)",
+            r"(?:örnek|example|örnek cümle|örnek kullanım|kullanım örneği)\s*[:\-–—]\s*(.+)",
             text,
             flags=re.IGNORECASE,
         )
@@ -114,9 +203,7 @@ class CumleMotoruV2:
     def _extract_from_text(self, word, text, candidates, seen, source, url=""):
         if not text:
             return
-        text = html.unescape(str(text))
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
+        text = self._clean_text(text)
 
         example_matches = re.findall(
             r"(?:örnek|example|örnek cümle|örnek kullanım|kullanım örneği)\s*[:\-–—]\s*(.+)",
@@ -137,9 +224,7 @@ class CumleMotoruV2:
                 return
 
     def _add_sentence(self, word, sentence, candidates, seen, source, url=""):
-        sentence = html.unescape(str(sentence or ""))
-        sentence = re.sub(r"<[^>]+>", " ", sentence)
-        sentence = re.sub(r"\s+", " ", sentence).strip()
+        sentence = self._clean_text(sentence)
         sentence = sentence.strip(" \t\r\n-–—•·\"'“”‘’")
         sentence = re.sub(
             r"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği|örnek)\s*[:\-–—]?\s*",
