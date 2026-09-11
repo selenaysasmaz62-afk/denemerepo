@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import re
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
@@ -10,7 +11,12 @@ from arastirma.web_arastirici import WebArastirici
 
 
 class KelimeArastirmaMotoru:
-    """Kelime anlamı ve kullanımını araştırır."""
+    """Kelime anlamlarını ve kullanımlarını birden fazla kaynaktan toplar."""
+
+    _JUNK_TITLE = (
+        "numaralı adam", "gizli yüz", "iskeleti", "tanıma sistemi",
+        "film", "albüm", "şarkı", "oyun", "dizi", "bölüm",
+    )
 
     def __init__(self):
         self.web = WebArastirici(timeout=12, max_results=8)
@@ -19,30 +25,36 @@ class KelimeArastirmaMotoru:
         results = []
         seen = set()
 
-        query = f'"{word}" Türkçe anlamı kullanım sözlük'
-        data = await self.web.search(query)
-        self._append_results(results, seen, data.get("results", []))
+        # Genel aramayı tek sorguya bırakmıyoruz. Özellikle çok anlamlı
+        # kelimelerde sözlük/anlam sonuçlarını ayrı ayrı topluyoruz.
+        queries = (
+            f'"{word}" TDK anlamı',
+            f'"{word}" ne demek Türkçe',
+            f'"{word}" sözlük anlamı',
+            f'"{word}" kullanım Türkçe',
+        )
+        for query in queries:
+            data = await self.web.search(query)
+            self._append_results(results, seen, data.get("results", []))
+            if len(results) >= 16:
+                break
 
-        if len(results) < 2:
-            dictionary = await self._dictionary_results(word)
-            self._append_results(results, seen, dictionary)
+        dictionary = await self._dictionary_results(word)
+        self._append_results(results, seen, dictionary)
 
-        if len(results) < 2:
+        if len(results) < 4:
             wikipedia = await self._wikipedia_results(word)
             self._append_results(results, seen, wikipedia)
 
-        meanings = []
-        for result in results:
-            title = self._clean_text(result.get("title", ""))
-            snippet = self._clean_text(result.get("snippet", ""))
-            text = f"{title} — {snippet}" if title and snippet else title or snippet
-            if text:
-                meanings.append(text)
+        ranked = sorted(results, key=lambda item: self._result_score(word, item), reverse=True)
+        senses = self._build_senses(word, ranked)
+        meanings = [sense["definition"] for sense in senses]
 
         return {
             "word": word,
+            "senses": senses,
             "meanings": meanings[:12],
-            "sources": results[:12],
+            "sources": ranked[:12],
         }
 
     async def research_usage(self, word, research):
@@ -50,11 +62,18 @@ class KelimeArastirmaMotoru:
         patterns = []
         seen = set()
 
-        query = f'"{word}" örnek cümle kullanım örnekleri'
-        data = await self.web.search(query)
-        self._append_contexts(contexts, seen, data.get("results", []))
+        queries = (
+            f'"{word}" örnek cümle',
+            f'"{word}" cümle içinde kullanım',
+            f'"{word}" günlük kullanım örnekleri',
+        )
+        for query in queries:
+            data = await self.web.search(query)
+            self._append_contexts(contexts, seen, data.get("results", []))
+            if len(contexts) >= 12:
+                break
 
-        if len(contexts) < 2:
+        if len(contexts) < 4:
             self._append_contexts(
                 contexts,
                 seen,
@@ -72,6 +91,70 @@ class KelimeArastirmaMotoru:
             "patterns": patterns[:10],
         }
 
+    @classmethod
+    def _result_score(cls, word, result):
+        title = cls._clean_text(result.get("title", "")).casefold()
+        snippet = cls._clean_text(result.get("snippet", "")).casefold()
+        text = f"{title} {snippet}"
+        score = 0
+
+        if word.casefold() in title:
+            score += 3
+        for marker in ("tdk", "sözlük", "anlamı", "ne demek", "tanım", "dictionary"):
+            if marker in text:
+                score += 4
+        if "wikipedia" in title:
+            score += 1
+        if any(marker in title for marker in cls._JUNK_TITLE):
+            score -= 10
+        if len(snippet) >= 40:
+            score += 2
+        if result.get("url"):
+            score += 1
+        return score
+
+    @classmethod
+    def _build_senses(cls, word, results):
+        senses = []
+        seen = set()
+        for result in results:
+            title = cls._clean_text(result.get("title", ""))
+            snippet = cls._clean_text(result.get("snippet", ""))
+            if not snippet:
+                continue
+            if any(marker in title.casefold() for marker in cls._JUNK_TITLE):
+                continue
+
+            definition = snippet
+            definition = re.sub(r"^(?:anlamı|tanımı|sözlük anlamı)\s*[:\-]\s*", "", definition, flags=re.I)
+            definition = cls._clean_text(definition)
+            key = definition.casefold()
+            if len(definition) < 20 or key in seen:
+                continue
+            seen.add(key)
+            senses.append({
+                "definition": definition,
+                "part_of_speech": cls._guess_part_of_speech(definition),
+                "source_title": title,
+                "source_url": result.get("url", "") or "",
+            })
+            if len(senses) >= 8:
+                break
+        return senses
+
+    @staticmethod
+    def _guess_part_of_speech(text):
+        lower = text.casefold()
+        if any(x in lower for x in ("fiil", "eylem", "-mek", "-mak")):
+            return "fiil"
+        if "sıfat" in lower:
+            return "sıfat"
+        if "zarf" in lower:
+            return "zarf"
+        if "isim" in lower or "ad " in lower:
+            return "isim"
+        return "belirsiz"
+
     @staticmethod
     def _clean_text(value):
         return " ".join(html.unescape(str(value or "")).split()).strip()
@@ -86,7 +169,7 @@ class KelimeArastirmaMotoru:
                 "snippet": KelimeArastirmaMotoru._clean_text(result.get("snippet", "")),
                 "url": result.get("url", "") or "",
             }
-            key = clean["url"] or clean["title"]
+            key = clean["url"] or f'{clean["title"]}|{clean["snippet"]}'
             if key and key not in seen:
                 seen.add(key)
                 results.append(clean)
@@ -97,7 +180,6 @@ class KelimeArastirmaMotoru:
             if isinstance(result, str):
                 text = KelimeArastirmaMotoru._clean_text(result)
             elif isinstance(result, dict):
-                # Başlığı cümleye katma; aksi halde kaynak başlığı cümlenin başında tekrar eder.
                 snippet = KelimeArastirmaMotoru._clean_text(result.get("snippet", ""))
                 title = KelimeArastirmaMotoru._clean_text(result.get("title", ""))
                 text = snippet or title
@@ -143,8 +225,7 @@ class KelimeArastirmaMotoru:
             results = []
             for item in payload.get("query", {}).get("search", []):
                 title = self._clean_text(item.get("title", ""))
-                snippet = html.unescape(item.get("snippet", "") or "")
-                snippet = self._clean_text(snippet)
+                snippet = self._clean_text(item.get("snippet", "") or "")
                 if title or snippet:
                     results.append({
                         "title": f"Vikipedi — {title or word}",
