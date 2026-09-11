@@ -41,16 +41,29 @@ class KelimeArastirmaMotoru:
             f'"{word}" örnek cümle',
             f'"{word}" günlük kullanım cümle',
             f'"{word}" haber kullanım',
+            f'"{word}" kullanım örnekleri',
         ]
         contexts = []
         patterns = []
         seen = set()
+
         for query in queries:
             data = await self.web.search(query)
             for result in data.get("results", []):
                 text = f'{result.get("title", "")} {result.get("snippet", "")}'.strip()
-                if text and text not in seen:
-                    seen.add(text)
+                key = " ".join(text.casefold().split())
+                if text and key not in seen:
+                    seen.add(key)
+                    contexts.append(text)
+
+        # Arama sağlayıcısı kullanım sorgularına sonuç vermezse, ilk araştırmanın
+        # kaynak/snippet verisini ikinci bir kullanım kaynağı olarak değerlendir.
+        if len(contexts) < 2:
+            for result in research.get("sources", []) if isinstance(research, dict) else []:
+                text = f'{result.get("title", "")} {result.get("snippet", "")}'.strip()
+                key = " ".join(text.casefold().split())
+                if text and key not in seen:
+                    seen.add(key)
                     contexts.append(text)
 
         lower = word.casefold()
