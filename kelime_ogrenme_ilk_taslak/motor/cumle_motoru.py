@@ -23,8 +23,9 @@ class CumleMotoru:
         candidates = []
         seen = set()
 
-        for item in usage.get("contexts", []):
-            self._extract_from_text(word, item, candidates, seen, "usage_research")
+        if isinstance(usage, dict):
+            for item in usage.get("contexts", []) or []:
+                self._extract_from_text(word, item, candidates, seen, "usage_research")
 
         for query in queries:
             data = await self.web.search(query)
@@ -41,6 +42,17 @@ class CumleMotoru:
             if len(candidates) >= 15:
                 break
 
+        # Hedefli cümle aramaları sonuç vermezse ilk araştırmanın kaynak
+        # snippet'lerini son aday havuzu olarak değerlendir.
+        if not candidates and isinstance(research, dict):
+            for result in research.get("sources", []) or []:
+                text = f'{result.get("title", "")}. {result.get("snippet", "")}'.strip()
+                self._extract_from_text(
+                    word, text, candidates, seen, "research_source_fallback", result.get("url", "")
+                )
+                if len(candidates) >= 15:
+                    break
+
         return candidates[:15]
 
     def _extract_from_text(self, word, text, candidates, seen, source, url=""):
@@ -53,9 +65,6 @@ class CumleMotoru:
             return
 
         parts = re.split(r"(?<=[.!?])\s+|\s+[•·]\s+|\s+[–—]\s+", text)
-
-        # Arama snippet'leri çoğu zaman noktalama olmadan tek parça gelir.
-        # Bu nedenle parça geçerli değilse tüm metni ikinci aday olarak deneriz.
         possible = list(parts)
         if len(parts) == 1:
             possible.append(text)
@@ -75,48 +84,36 @@ class CumleMotoru:
             if key in seen:
                 continue
             seen.add(key)
-
-            candidates.append({
-                "sentence": sentence,
-                "source": source,
-                "url": url,
-            })
+            candidates.append({"sentence": sentence, "source": source, "url": url})
 
     @staticmethod
     def _clean_prefix(word, sentence):
-        # Başlık/snippet birleşimlerinde sık görülen etiketleri kaldır.
         sentence = re.sub(
             rf"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği)\s*[:\-–—]?\s*",
-            "",
-            sentence,
-            flags=re.IGNORECASE,
+            "", sentence, flags=re.IGNORECASE,
         )
         return sentence.strip()
 
     @staticmethod
     def _is_valid_candidate(word, sentence):
-        if len(sentence) < 25 or len(sentence) > 300:
+        if len(sentence) < 18 or len(sentence) > 300:
             return False
         if word.casefold() not in sentence.casefold():
             return False
 
         lower = sentence.casefold()
         junk = (
-            "ne demek", "anlamı", "sözlük", "tdk", "arama sonuçları",
-            "wikipedia", "translate", "çeviri", "giriş yap", "devamını oku",
-            "arama motoru", "sonuç bulundu",
+            "arama sonuçları", "wikipedia", "translate", "çeviri", "giriş yap",
+            "devamını oku", "cookie", "gizlilik politikası",
         )
         if any(marker in lower for marker in junk):
             return False
 
         words = re.findall(r"[\wçğıöşüÇĞİÖŞÜ]+", sentence, flags=re.UNICODE)
-        if len(words) < 5:
+        if len(words) < 4:
             return False
-
         if "http://" in lower or "https://" in lower or "www." in lower:
             return False
-
-        # Cümlenin yalnızca başlık gibi görünmesini engelle.
         if sentence.count("|") >= 2 or sentence.count("/") >= 3:
             return False
 
