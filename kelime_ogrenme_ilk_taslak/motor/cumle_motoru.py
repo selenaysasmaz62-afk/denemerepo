@@ -6,30 +6,26 @@ from arastirma.web_arastirici import WebArastirici
 
 
 class CumleMotoru:
-    """Kelime için web araştırmasından gerçek kullanım cümleleri çıkarmaya çalışır."""
+    """Kelime için web araştırmasından gerçekçi kullanım cümleleri çıkarır."""
 
     def __init__(self):
         self.web = WebArastirici(timeout=12, max_results=10)
 
     async def research(self, word, research, usage):
-        # Sadece önceki kullanım snippet'lerine güvenme; cümle araştırmasını
-        # ayrıca hedefleyen aramalar yap.
         queries = [
-            f'"{word}" "örnek cümle"',
+            f'"{word}" örnek cümle',
             f'"{word}" cümle içinde kullanım',
-            f'"{word}" "şöyle" cümle',
-            f'"{word}" günlük hayatta cümle',
-            f'"{word}" haber cümle kullanım',
+            f'"{word}" günlük kullanım örneği',
+            f'"{word}" haber cümlesi',
+            f'"{word}" nasıl kullanılır cümle',
         ]
 
         candidates = []
         seen = set()
 
-        # Önceki kullanım araştırmasının verilerini de değerlendir.
         for item in usage.get("contexts", []):
             self._extract_from_text(word, item, candidates, seen, "usage_research")
 
-        # Hedefli web aramalarından cümle adaylarını çıkar.
         for query in queries:
             data = await self.web.search(query)
             for result in data.get("results", []):
@@ -40,6 +36,10 @@ class CumleMotoru:
                 self._extract_from_text(
                     word, text, candidates, seen, "web_sentence_research", source_url
                 )
+                if len(candidates) >= 15:
+                    break
+            if len(candidates) >= 15:
+                break
 
         return candidates[:15]
 
@@ -47,18 +47,29 @@ class CumleMotoru:
         if not text:
             return
 
-        # HTML/arama motoru artıkları ve fazla boşlukları temizle.
-        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"<[^>]+>", " ", str(text))
         text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return
 
-        # Noktalama işaretlerinden gerçek cümle parçalarını ayır.
-        parts = re.split(r"(?<=[.!?])\s+|\s+[•·]\s+|\s+[–—-]\s+", text)
-        for part in parts:
+        parts = re.split(r"(?<=[.!?])\s+|\s+[•·]\s+|\s+[–—]\s+", text)
+
+        # Arama snippet'leri çoğu zaman noktalama olmadan tek parça gelir.
+        # Bu nedenle parça geçerli değilse tüm metni ikinci aday olarak deneriz.
+        possible = list(parts)
+        if len(parts) == 1:
+            possible.append(text)
+
+        for part in possible:
             sentence = part.strip(" \t\r\n-–—•·\"'“”‘’")
             sentence = re.sub(r"\s+", " ", sentence).strip()
+            sentence = self._clean_prefix(word, sentence)
 
             if not self._is_valid_candidate(word, sentence):
                 continue
+
+            if sentence[-1] not in ".!?":
+                sentence += "."
 
             key = " ".join(sentence.casefold().split())
             if key in seen:
@@ -72,28 +83,41 @@ class CumleMotoru:
             })
 
     @staticmethod
+    def _clean_prefix(word, sentence):
+        # Başlık/snippet birleşimlerinde sık görülen etiketleri kaldır.
+        sentence = re.sub(
+            rf"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği)\s*[:\-–—]?\s*",
+            "",
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        return sentence.strip()
+
+    @staticmethod
     def _is_valid_candidate(word, sentence):
         if len(sentence) < 25 or len(sentence) > 300:
             return False
         if word.casefold() not in sentence.casefold():
             return False
 
-        # Arama başlığı/snippet'i gibi duran parçaları ele.
         lower = sentence.casefold()
         junk = (
             "ne demek", "anlamı", "sözlük", "tdk", "arama sonuçları",
             "wikipedia", "translate", "çeviri", "giriş yap", "devamını oku",
+            "arama motoru", "sonuç bulundu",
         )
         if any(marker in lower for marker in junk):
             return False
 
-        # En az birkaç kelimelik doğal bir yapı bekle.
         words = re.findall(r"[\wçğıöşüÇĞİÖŞÜ]+", sentence, flags=re.UNICODE)
         if len(words) < 5:
             return False
 
-        # URL veya HTML kalıntısı içerenleri alma.
         if "http://" in lower or "https://" in lower or "www." in lower:
+            return False
+
+        # Cümlenin yalnızca başlık gibi görünmesini engelle.
+        if sentence.count("|") >= 2 or sentence.count("/") >= 3:
             return False
 
         return True
