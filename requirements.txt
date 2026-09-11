@@ -1,1 +1,0 @@
-# İlk taslakta standart Python yeterlidir.
