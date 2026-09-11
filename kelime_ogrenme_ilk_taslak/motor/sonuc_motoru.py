@@ -21,6 +21,7 @@ class SonucMotoru:
         )
 
     async def save_test_result(self, learning_id, word, research, usage, sentences, responses, validation):
+        await self.save_validation(learning_id, validation)
         now = datetime.now(timezone.utc).isoformat()
         payload = {
             "word": word,
