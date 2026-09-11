@@ -18,27 +18,18 @@ class CumleMotoruV2:
 
     async def research(self, word, research, usage):
         candidates, seen = [], set()
-
-        # 1) Tatoeba API v1 + eski API yedeği.
         for sentence, url in await self._tatoeba_sentences(word):
             self._add_sentence(word, sentence, candidates, seen, "tatoeba", url)
             if len(candidates) >= 15:
                 return candidates[:15]
-
-        # 2) Türkçe sözlük API'lerindeki gerçek example alanları.
         for sentence, url in await self._dictionary_examples(word):
             self._add_sentence(word, sentence, candidates, seen, "dictionary_example", url)
             if len(candidates) >= 15:
                 return candidates[:15]
-
-        # 3) Türkçe Vikisözlük sayfasındaki örnek cümleler.
         for sentence, url in await self._wiktionary_examples(word):
             self._add_sentence(word, sentence, candidates, seen, "vikisozluk_example", url)
             if len(candidates) >= 15:
                 return candidates[:15]
-
-        # 4) Web araması. Arama motoru sonuç vermese bile üstteki kaynaklar
-        # bağımsız çalışır; başlıklar burada cümle olarak kullanılmaz.
         if len(candidates) < 6:
             for query in (
                 f'"{word}" "örnek cümle"',
@@ -60,8 +51,6 @@ class CumleMotoruV2:
                     )
                     if len(candidates) >= 15:
                         return candidates[:15]
-
-        # 5) Araştırma kaynaklarında açıkça belirtilmiş örnek cümleler.
         if len(candidates) < 3 and isinstance(research, dict):
             for result in research.get("sources", []) or []:
                 if not isinstance(result, dict):
@@ -72,18 +61,16 @@ class CumleMotoruV2:
                 )
                 if len(candidates) >= 15:
                     return candidates[:15]
-
-        # 6) Kullanım bağlamı son yedektir; başlık değil, sadece metin kullanılır.
         if len(candidates) < 3:
             contexts = usage.get("contexts", []) if isinstance(usage, dict) else []
             for context in contexts:
                 self._extract_from_text(word, context, candidates, seen, "usage_research", "")
                 if len(candidates) >= 15:
                     break
-
         return candidates[:15]
 
     async def _tatoeba_sentences(self, word):
+        """Tatoeba'nın gevşek sonuçlarını gerçek kelime eşleşmesiyle süzer."""
         urls = (
             (
                 "https://api.tatoeba.org/v1/sentences?"
@@ -111,8 +98,8 @@ class CumleMotoruV2:
                 for item in items:
                     if not isinstance(item, dict):
                         continue
-                    text = item.get("text") or item.get("sentence") or ""
-                    if text:
+                    text = self._clean_text(item.get("text") or item.get("sentence") or "")
+                    if text and self._contains_target_word(word, text):
                         values.append((text, source_url))
                 if values:
                     return values
@@ -130,7 +117,7 @@ class CumleMotoruV2:
                 for meaning in entry.get("meanings", []) or []:
                     for definition in meaning.get("definitions", []) or []:
                         example = self._clean_text(definition.get("example", ""))
-                        if example:
+                        if example and self._contains_target_word(word, example):
                             values.append((example, "https://api.dictionaryapi.dev/"))
             return values
         except Exception:
@@ -152,17 +139,15 @@ class CumleMotoruV2:
                     continue
                 for line in re.split(r"\n+", extract):
                     line = self._clean_text(line)
-                    if not line:
+                    if not line or not re.search(r"(?:örnek|örnekler|kullanım)", line, re.I):
                         continue
-                    # Vikisözlükte örnek bölümlerini hedefle; tanım satırlarını
-                    # doğrudan cümle diye kabul etme.
-                    if re.search(r"(?:örnek|örnekler|kullanım)", line, re.I):
-                        self._extract_from_text(
-                            word, line, values_as_candidates := [], set(),
-                            "vikisozluk_example", "https://tr.wiktionary.org/"
-                        )
-                        for item in values_as_candidates:
-                            values.append((item["sentence"], "https://tr.wiktionary.org/"))
+                    extracted = []
+                    self._extract_from_text(
+                        word, line, extracted, set(),
+                        "vikisozluk_example", "https://tr.wiktionary.org/"
+                    )
+                    for item in extracted:
+                        values.append((item["sentence"], "https://tr.wiktionary.org/"))
             return values
         except Exception:
             return []
@@ -172,7 +157,7 @@ class CumleMotoruV2:
         request = Request(
             url,
             headers={
-                "User-Agent": "FatosKelimeOgrenmeTest/1.2",
+                "User-Agent": "FatosKelimeOgrenmeTest/1.3",
                 "Accept": "application/json",
                 "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
             },
@@ -185,6 +170,17 @@ class CumleMotoruV2:
         text = html.unescape(str(value or ""))
         text = re.sub(r"<[^>]+>", " ", text)
         return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _contains_target_word(word, text):
+        escaped = re.escape(word.strip())
+        if not escaped:
+            return False
+        return re.search(
+            rf"(?<![\wçğıöşüÇĞİÖŞÜ]){escaped}(?![\wçğıöşüÇĞİÖŞÜ])",
+            text,
+            flags=re.IGNORECASE,
+        ) is not None
 
     def _extract_research_examples(self, word, text, candidates, seen, source, url=""):
         if not text:
@@ -204,7 +200,6 @@ class CumleMotoruV2:
         if not text:
             return
         text = self._clean_text(text)
-
         example_matches = re.findall(
             r"(?:örnek|example|örnek cümle|örnek kullanım|kullanım örneği)\s*[:\-–—]\s*(.+)",
             text,
@@ -216,7 +211,6 @@ class CumleMotoruV2:
                 if len(candidates) >= 15:
                     return
             return
-
         parts = re.split(r"(?<=[.!?])\s+|\s+[•·]\s+|\s+[–—]\s+", text)
         for part in parts:
             self._add_sentence(word, part, candidates, seen, source, url)
@@ -239,12 +233,12 @@ class CumleMotoruV2:
             seen.add(key)
             candidates.append({"sentence": sentence, "source": source, "url": url})
 
-    @staticmethod
-    def _is_valid_candidate(word, sentence):
+    @classmethod
+    def _is_valid_candidate(cls, word, sentence):
         if len(sentence) < 12 or len(sentence) > 220:
             return False
         lower = sentence.casefold()
-        if word.casefold() not in lower:
+        if not cls._contains_target_word(word, sentence):
             return False
         if any(marker in lower for marker in (
             "arama sonuçları", "wikipedia", "translate", "çeviri", "giriş yap",
