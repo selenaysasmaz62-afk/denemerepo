@@ -1,0 +1,6 @@
+{
+  "mode": "SAFE_TEST_ONLY",
+  "write_live_database": false,
+  "delete_input_data": false,
+  "move_learning_files": false
+}

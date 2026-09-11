@@ -1,0 +1,2 @@
+# Test kelimelerini bu dosyaya yaz.
+# Bu dosya otomatik olarak silinmez veya değiştirilmez.
