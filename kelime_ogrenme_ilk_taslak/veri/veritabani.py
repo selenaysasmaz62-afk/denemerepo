@@ -2,6 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+
 class TestDatabase:
     def __init__(self, path):
         self.path = Path(path)
@@ -35,6 +36,8 @@ class TestDatabase:
             learning_id INTEGER PRIMARY KEY,
             research_json TEXT,
             usage_json TEXT,
+            sentences_json TEXT,
+            responses_json TEXT,
             created_at TEXT,
             updated_at TEXT
         );
@@ -53,6 +56,18 @@ class TestDatabase:
             created_at TEXT NOT NULL
         );
         ''')
+
+        # Eski test DB'leri için güvenli, geriye dönük migration.
+        columns = {
+            row[1] for row in self.conn.execute(
+                "PRAGMA table_info(automatic_word_research)"
+            ).fetchall()
+        }
+        for column in ("sentences_json", "responses_json"):
+            if column not in columns:
+                self.conn.execute(
+                    f"ALTER TABLE automatic_word_research ADD COLUMN {column} TEXT"
+                )
         self.commit()
 
     def execute(self, sql, params=()):
@@ -67,21 +82,37 @@ class TestDatabase:
     def save_json(self, learning_id, data_type, data):
         import datetime
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        payload = json.dumps(data, ensure_ascii=False)
+        columns = {
+            "research": "research_json",
+            "usage": "usage_json",
+            "sentences": "sentences_json",
+            "responses": "responses_json",
+        }
+        column = columns.get(data_type)
+        if not column:
+            raise ValueError(f"Bilinmeyen veri tipi: {data_type}")
+
         row = self.fetchone(
             "SELECT learning_id FROM automatic_word_research WHERE learning_id=?",
             (learning_id,)
         )
-        payload = json.dumps(data, ensure_ascii=False)
         if not row:
+            values = {
+                "research_json": None,
+                "usage_json": None,
+                "sentences_json": None,
+                "responses_json": None,
+            }
+            values[column] = payload
             self.execute(
                 "INSERT INTO automatic_word_research "
-                "(learning_id, research_json, usage_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (learning_id, payload if data_type == "research" else None,
-                 payload if data_type == "usage" else None, now, now)
+                "(learning_id, research_json, usage_json, sentences_json, responses_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (learning_id, values["research_json"], values["usage_json"],
+                 values["sentences_json"], values["responses_json"], now, now)
             )
         else:
-            column = "research_json" if data_type == "research" else "usage_json"
             self.execute(
                 f"UPDATE automatic_word_research SET {column}=?, updated_at=? WHERE learning_id=?",
                 (payload, now, learning_id)
