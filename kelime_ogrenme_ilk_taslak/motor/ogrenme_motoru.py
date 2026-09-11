@@ -28,6 +28,43 @@ class KelimeOgrenmeMotoru:
                 break
             await self.process_word(item["id"], item["word"])
 
+    @staticmethod
+    def _normalize_usage(word, usage):
+        """Eski/alternatif araştırma çıktıları liste ise pipeline'ı bozmaz."""
+        if isinstance(usage, dict):
+            contexts = usage.get("contexts", []) or []
+            patterns = usage.get("patterns", []) or []
+            return {
+                "word": usage.get("word", word),
+                "contexts": contexts,
+                "patterns": patterns,
+            }
+
+        if isinstance(usage, list):
+            contexts = []
+            seen = set()
+            for item in usage:
+                if isinstance(item, str):
+                    text = item.strip()
+                elif isinstance(item, dict):
+                    text = str(item.get("snippet") or item.get("text") or item.get("title") or "").strip()
+                else:
+                    text = str(item).strip()
+                if text and text.casefold() not in seen:
+                    seen.add(text.casefold())
+                    contexts.append(text)
+            return {
+                "word": word,
+                "contexts": contexts,
+                "patterns": [
+                    f'"{word}" kullanım bağlamı: {text}'
+                    for text in contexts
+                    if word.casefold() in text.casefold()
+                ][:10],
+            }
+
+        return {"word": word, "contexts": [], "patterns": []}
+
     async def process_word(self, learning_id, word):
         await self.state.set_step(learning_id, "researching")
         research = await self.research.research(word)
@@ -35,6 +72,7 @@ class KelimeOgrenmeMotoru:
 
         await self.state.set_step(learning_id, "usage_research")
         usage = await self.research.research_usage(word, research)
+        usage = self._normalize_usage(word, usage)
         await self.state.save_data(learning_id, "usage", usage)
 
         await self.state.set_step(learning_id, "sentence_research")
