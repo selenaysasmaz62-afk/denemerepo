@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import re
 from urllib.parse import quote_plus
@@ -23,11 +24,20 @@ class CumleMotoru:
             for item in usage.get("contexts", []) or []:
                 self._extract_from_text(word, item, candidates, seen, "usage_research")
 
-        # Tek hedefli web sorgusu; sonuç yoksa gerçek örnek cümle API'sine geç.
         data = await self.web.search(f'"{word}" örnek cümle kullanım')
         for result in data.get("results", []):
-            text = f'{result.get("title", "")}. {result.get("snippet", "")}'.strip()
-            self._extract_from_text(word, text, candidates, seen, "web_sentence_research", result.get("url", ""))
+            if not isinstance(result, dict):
+                continue
+            # Cümle çıkarımında başlığı değil snippet'i önceliklendir.
+            text = result.get("snippet", "") or result.get("title", "")
+            self._extract_from_text(
+                word,
+                text,
+                candidates,
+                seen,
+                "web_sentence_research",
+                result.get("url", ""),
+            )
             if len(candidates) >= 15:
                 break
 
@@ -37,11 +47,19 @@ class CumleMotoru:
                 if len(candidates) >= 15:
                     break
 
-        # Son yedek: araştırma kaynakları; yalnızca cümle filtresini geçerse kabul edilir.
         if not candidates and isinstance(research, dict):
             for result in research.get("sources", []) or []:
-                text = f'{result.get("title", "")}. {result.get("snippet", "")}'.strip()
-                self._extract_from_text(word, text, candidates, seen, "research_source_fallback", result.get("url", ""))
+                if not isinstance(result, dict):
+                    continue
+                text = result.get("snippet", "") or result.get("title", "")
+                self._extract_from_text(
+                    word,
+                    text,
+                    candidates,
+                    seen,
+                    "research_source_fallback",
+                    result.get("url", ""),
+                )
                 if len(candidates) >= 15:
                     break
 
@@ -79,7 +97,8 @@ class CumleMotoru:
     def _extract_from_text(self, word, text, candidates, seen, source, url=""):
         if not text:
             return
-        text = re.sub(r"<[^>]+>", " ", str(text))
+        text = html.unescape(str(text))
+        text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         if not text:
             return
@@ -91,6 +110,7 @@ class CumleMotoru:
 
         for part in possible:
             sentence = part.strip(" \t\r\n-–—•·\"'“”‘’")
+            sentence = html.unescape(sentence)
             sentence = re.sub(r"\s+", " ", sentence).strip()
             sentence = self._clean_prefix(sentence)
             if not self._is_valid_candidate(word, sentence):
@@ -107,7 +127,9 @@ class CumleMotoru:
     def _clean_prefix(sentence):
         return re.sub(
             r"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği)\s*[:\-–—]?\s*",
-            "", sentence, flags=re.IGNORECASE,
+            "",
+            sentence,
+            flags=re.IGNORECASE,
         ).strip()
 
     @staticmethod
