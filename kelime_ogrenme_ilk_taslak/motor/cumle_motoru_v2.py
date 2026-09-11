@@ -11,25 +11,29 @@ from arastirma.web_arastirici import WebArastirici
 
 
 class CumleMotoruV2:
-    """Gerçek Türkçe kullanım cümlelerini birden fazla güvenilir kanaldan toplar."""
+    """Gerçek Türkçe kullanım cümlelerini birden fazla kaynaktan toplar."""
 
     def __init__(self):
         self.web = WebArastirici(timeout=12, max_results=8)
 
     async def research(self, word, research, usage):
         candidates, seen = [], set()
+
         for sentence, url in await self._tatoeba_sentences(word):
             self._add_sentence(word, sentence, candidates, seen, "tatoeba", url)
             if len(candidates) >= 15:
                 return candidates[:15]
+
         for sentence, url in await self._dictionary_examples(word):
             self._add_sentence(word, sentence, candidates, seen, "dictionary_example", url)
             if len(candidates) >= 15:
                 return candidates[:15]
+
         for sentence, url in await self._wiktionary_examples(word):
             self._add_sentence(word, sentence, candidates, seen, "vikisozluk_example", url)
             if len(candidates) >= 15:
                 return candidates[:15]
+
         if len(candidates) < 6:
             for query in (
                 f'"{word}" "örnek cümle"',
@@ -43,14 +47,21 @@ class CumleMotoruV2:
                     if not isinstance(result, dict):
                         continue
                     snippet = result.get("snippet", "") or ""
+                    url = result.get("url", "") or ""
                     if not snippet:
                         continue
-                    self._extract_from_text(
-                        word, snippet, candidates, seen,
-                        "web_sentence_research", result.get("url", ""),
-                    )
+                    self._extract_from_text(word, snippet, candidates, seen, "web_sentence_research", url)
+
+                    # Snippet gerçek örneği taşımıyorsa sayfanın kendisini oku.
+                    if len(candidates) < 6 and url:
+                        page_text = await asyncio.to_thread(self._fetch_html_text, url)
+                        self._extract_from_text(word, page_text, candidates, seen, "web_page_sentence_research", url)
+
                     if len(candidates) >= 15:
                         return candidates[:15]
+
+        # Araştırma kaynağı yalnızca açıkça "Örnek:" biçiminde gerçek örnek
+        # veriyorsa kullanılabilir. Tanım/snippet artık cümle değildir.
         if len(candidates) < 3 and isinstance(research, dict):
             for result in research.get("sources", []) or []:
                 if not isinstance(result, dict):
@@ -61,16 +72,12 @@ class CumleMotoruV2:
                 )
                 if len(candidates) >= 15:
                     return candidates[:15]
-        if len(candidates) < 3:
-            contexts = usage.get("contexts", []) if isinstance(usage, dict) else []
-            for context in contexts:
-                self._extract_from_text(word, context, candidates, seen, "usage_research", "")
-                if len(candidates) >= 15:
-                    break
+
+        # Kullanım bağlamlarını cümle diye kaydetmiyoruz. Bu, Wikipedia gibi
+        # kaynakların tanım/başlık metnini sahte örnek cümleye çevirmesini önler.
         return candidates[:15]
 
     async def _tatoeba_sentences(self, word):
-        """Tatoeba'nın gevşek sonuçlarını gerçek kelime eşleşmesiyle süzer."""
         urls = (
             (
                 "https://api.tatoeba.org/v1/sentences?"
@@ -108,7 +115,6 @@ class CumleMotoruV2:
         return []
 
     async def _dictionary_examples(self, word):
-        """Dictionary API'deki example alanlarını doğrudan toplar."""
         try:
             url = f"https://api.dictionaryapi.dev/api/v2/entries/tr/{quote_plus(word)}"
             payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
@@ -124,7 +130,6 @@ class CumleMotoruV2:
             return []
 
     async def _wiktionary_examples(self, word):
-        """Türkçe Vikisözlük maddesinden açık örnek cümleleri çıkarır."""
         try:
             url = (
                 "https://tr.wiktionary.org/w/api.php?action=query&prop=extracts"
@@ -157,13 +162,33 @@ class CumleMotoruV2:
         request = Request(
             url,
             headers={
-                "User-Agent": "FatosKelimeOgrenmeTest/1.3",
+                "User-Agent": "FatosKelimeOgrenmeTest/1.4",
                 "Accept": "application/json",
                 "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
             },
         )
         with urlopen(request, timeout=10) as response:
             return response.read().decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _fetch_html_text(url):
+        try:
+            request = Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) FatosKelimeOgrenmeTest/1.4",
+                    "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
+                },
+            )
+            with urlopen(request, timeout=10) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+            raw = re.sub(r"<script\b[^>]*>.*?</script>", " ", raw, flags=re.I | re.S)
+            raw = re.sub(r"<style\b[^>]*>.*?</style>", " ", raw, flags=re.I | re.S)
+            raw = re.sub(r"<noscript\b[^>]*>.*?</noscript>", " ", raw, flags=re.I | re.S)
+            raw = re.sub(r"<[^>]+>", " ", raw)
+            return re.sub(r"\s+", " ", html.unescape(raw)).strip()
+        except Exception:
+            return ""
 
     @staticmethod
     def _clean_text(value):
@@ -187,7 +212,7 @@ class CumleMotoruV2:
             return
         text = self._clean_text(text)
         matches = re.findall(
-            r"(?:örnek|example|örnek cümle|örnek kullanım|kullanım örneği)\s*[:\-–—]\s*(.+)",
+            r"(?:örnek cümle|örnek kullanım|kullanım örneği|example|örnek)\s*[:\-–—]\s*(.+)",
             text,
             flags=re.IGNORECASE,
         )
@@ -200,8 +225,22 @@ class CumleMotoruV2:
         if not text:
             return
         text = self._clean_text(text)
+        if not text:
+            return
+
+        # "2 örnek cümle: 1) ... 2) ..." formatını ayrı cümlelere böl.
+        numbered = re.findall(
+            r"(?:^|\s)(?:\d+\s*[.)])\s*(.+?)(?=\s+\d+\s*[.)]\s*|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        for item in numbered:
+            self._add_sentence(word, item, candidates, seen, source, url)
+            if len(candidates) >= 15:
+                return
+
         example_matches = re.findall(
-            r"(?:örnek|example|örnek cümle|örnek kullanım|kullanım örneği)\s*[:\-–—]\s*(.+)",
+            r"(?:örnek cümle|örnek kullanım|kullanım örneği|example|örnek)\s*[:\-–—]\s*(.+)",
             text,
             flags=re.IGNORECASE,
         )
@@ -210,8 +249,8 @@ class CumleMotoruV2:
                 self._extract_from_text(word, example, candidates, seen, source, url)
                 if len(candidates) >= 15:
                     return
-            return
-        parts = re.split(r"(?<=[.!?])\s+|\s+[•·]\s+|\s+[–—]\s+", text)
+
+        parts = re.split(r"(?<=[.!?])\s+|\s*[•·]\s*|\s*\*\s*", text)
         for part in parts:
             self._add_sentence(word, part, candidates, seen, source, url)
             if len(candidates) >= 15:
@@ -219,7 +258,8 @@ class CumleMotoruV2:
 
     def _add_sentence(self, word, sentence, candidates, seen, source, url=""):
         sentence = self._clean_text(sentence)
-        sentence = sentence.strip(" \t\r\n-–—•·\"'“”‘’")
+        sentence = sentence.strip(" \t\r\n-–—•·*\"'“”‘’")
+        sentence = re.sub(r"^(?:\d+\s*[.)]|[-–—•·*])\s*", "", sentence).strip()
         sentence = re.sub(
             r"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği|örnek)\s*[:\-–—]?\s*",
             "", sentence, flags=re.IGNORECASE,
@@ -244,6 +284,8 @@ class CumleMotoruV2:
             "arama sonuçları", "wikipedia", "translate", "çeviri", "giriş yap",
             "devamını oku", "cookie", "gizlilik politikası", "sözlük", "ne demek",
             "numaralı adam", "film", "albüm", "şarkı", "oyun", "dizi",
+            "kelimesi ile ilgili cümleler", "bir cümlede", "örnek cümleler",
+            "ifadesini nasıl kullanacağınızı", "aşağıdaki anlamlara gelebilir",
             "http://", "https://", "www.",
         )):
             return False
