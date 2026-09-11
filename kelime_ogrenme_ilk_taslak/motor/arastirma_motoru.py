@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
@@ -9,7 +10,7 @@ from arastirma.web_arastirici import WebArastirici
 
 
 class KelimeArastirmaMotoru:
-    """Kelime anlamı ve kullanımını gereksiz sorgu yükü oluşturmadan araştırır."""
+    """Kelime anlamı ve kullanımını araştırır."""
 
     def __init__(self):
         self.web = WebArastirici(timeout=12, max_results=8)
@@ -18,13 +19,10 @@ class KelimeArastirmaMotoru:
         results = []
         seen = set()
 
-        # İlk olarak tek, geniş sorgu kullan. Böylece test ortamında arama
-        # sağlayıcısını gereksiz yere 3 kez çağırıp rate-limit'e girmeyiz.
         query = f'"{word}" Türkçe anlamı kullanım sözlük'
         data = await self.web.search(query)
         self._append_results(results, seen, data.get("results", []))
 
-        # Arama motoru boşsa gerçek sözlük ve ansiklopedi API'lerine geç.
         if len(results) < 2:
             dictionary = await self._dictionary_results(word)
             self._append_results(results, seen, dictionary)
@@ -35,7 +33,9 @@ class KelimeArastirmaMotoru:
 
         meanings = []
         for result in results:
-            text = f'{result.get("title", "")} {result.get("snippet", "")}'.strip()
+            title = self._clean_text(result.get("title", ""))
+            snippet = self._clean_text(result.get("snippet", ""))
+            text = f"{title} — {snippet}" if title and snippet else title or snippet
             if text:
                 meanings.append(text)
 
@@ -50,14 +50,16 @@ class KelimeArastirmaMotoru:
         patterns = []
         seen = set()
 
-        # Tek kullanım sorgusu: sağlayıcıyı yormadan gerçek kullanım bağlamı ara.
         query = f'"{word}" örnek cümle kullanım örnekleri'
         data = await self.web.search(query)
         self._append_contexts(contexts, seen, data.get("results", []))
 
-        # Sağlayıcı sonuç vermezse ilk araştırmanın kaynaklarını kullan.
         if len(contexts) < 2:
-            self._append_contexts(contexts, seen, research.get("sources", []) if isinstance(research, dict) else [])
+            self._append_contexts(
+                contexts,
+                seen,
+                research.get("sources", []) if isinstance(research, dict) else [],
+            )
 
         lower = word.casefold()
         for context in contexts:
@@ -71,23 +73,34 @@ class KelimeArastirmaMotoru:
         }
 
     @staticmethod
+    def _clean_text(value):
+        return " ".join(html.unescape(str(value or "")).split()).strip()
+
+    @staticmethod
     def _append_results(results, seen, items):
         for result in items:
             if not isinstance(result, dict):
                 continue
-            url = result.get("url", "")
-            key = url or result.get("title", "")
+            clean = {
+                "title": KelimeArastirmaMotoru._clean_text(result.get("title", "")),
+                "snippet": KelimeArastirmaMotoru._clean_text(result.get("snippet", "")),
+                "url": result.get("url", "") or "",
+            }
+            key = clean["url"] or clean["title"]
             if key and key not in seen:
                 seen.add(key)
-                results.append(result)
+                results.append(clean)
 
     @staticmethod
     def _append_contexts(contexts, seen, items):
         for result in items:
             if isinstance(result, str):
-                text = result.strip()
+                text = KelimeArastirmaMotoru._clean_text(result)
             elif isinstance(result, dict):
-                text = f'{result.get("title", "")} {result.get("snippet", "")}'.strip()
+                # Başlığı cümleye katma; aksi halde kaynak başlığı cümlenin başında tekrar eder.
+                snippet = KelimeArastirmaMotoru._clean_text(result.get("snippet", ""))
+                title = KelimeArastirmaMotoru._clean_text(result.get("title", ""))
+                text = snippet or title
             else:
                 continue
             key = " ".join(text.casefold().split())
@@ -104,8 +117,8 @@ class KelimeArastirmaMotoru:
                 for meaning in entry.get("meanings", []):
                     pos = meaning.get("partOfSpeech", "")
                     for definition in meaning.get("definitions", []):
-                        text = (definition.get("definition") or "").strip()
-                        example = (definition.get("example") or "").strip()
+                        text = self._clean_text(definition.get("definition", ""))
+                        example = self._clean_text(definition.get("example", ""))
                         if not text:
                             continue
                         snippet = f"{pos}: {text}" if pos else text
@@ -129,13 +142,17 @@ class KelimeArastirmaMotoru:
             payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
             results = []
             for item in payload.get("query", {}).get("search", []):
-                title = (item.get("title") or "").strip()
-                snippet = (item.get("snippet") or "").replace("<span class=\"searchmatch\">", "").replace("</span>", "").strip()
+                title = self._clean_text(item.get("title", ""))
+                snippet = html.unescape(item.get("snippet", "") or "")
+                snippet = self._clean_text(snippet)
                 if title or snippet:
                     results.append({
                         "title": f"Vikipedi — {title or word}",
                         "snippet": snippet,
-                        "url": f"https://tr.wikipedia.org/wiki/{quote_plus(title.replace(' ', '_'))}" if title else "https://tr.wikipedia.org/",
+                        "url": (
+                            f"https://tr.wikipedia.org/wiki/{quote_plus(title.replace(' ', '_'))}"
+                            if title else "https://tr.wikipedia.org/"
+                        ),
                     })
             return results
         except Exception:
