@@ -3,10 +3,11 @@ from veri.veritabani import TestDatabase
 from motor.kuyruk_motoru import KelimeKuyrukMotoru
 from motor.durum_motoru import DurumMotoru
 from motor.arastirma_motoru import KelimeArastirmaMotoru
-from motor.cumle_motoru import CumleMotoru
+from motor.cumle_motoru_v2 import CumleMotoruV2
 from motor.cevap_motoru import CevapMotoru
 from motor.kalite_kontrol import KaliteKontrol
 from motor.sonuc_motoru import SonucMotoru
+
 
 class KelimeOgrenmeMotoru:
     def __init__(self):
@@ -14,7 +15,7 @@ class KelimeOgrenmeMotoru:
         self.queue = KelimeKuyrukMotoru(SETTINGS.input_file, self.db)
         self.state = DurumMotoru(self.db)
         self.research = KelimeArastirmaMotoru()
-        self.sentences = CumleMotoru()
+        self.sentences = CumleMotoruV2()
         self.responses = CevapMotoru()
         self.quality = KaliteKontrol(SETTINGS.min_quality_score)
         self.results = SonucMotoru(self.db)
@@ -30,19 +31,14 @@ class KelimeOgrenmeMotoru:
 
     @staticmethod
     def _normalize_usage(word, usage):
-        """Eski/alternatif araştırma çıktıları liste ise pipeline'ı bozmaz."""
         if isinstance(usage, dict):
-            contexts = usage.get("contexts", []) or []
-            patterns = usage.get("patterns", []) or []
             return {
                 "word": usage.get("word", word),
-                "contexts": contexts,
-                "patterns": patterns,
+                "contexts": usage.get("contexts", []) or [],
+                "patterns": usage.get("patterns", []) or [],
             }
-
         if isinstance(usage, list):
-            contexts = []
-            seen = set()
+            contexts, seen = [], set()
             for item in usage:
                 if isinstance(item, str):
                     text = item.strip()
@@ -62,7 +58,6 @@ class KelimeOgrenmeMotoru:
                     if word.casefold() in text.casefold()
                 ][:10],
             }
-
         return {"word": word, "contexts": [], "patterns": []}
 
     async def process_word(self, learning_id, word):
@@ -85,7 +80,6 @@ class KelimeOgrenmeMotoru:
 
         await self.state.set_step(learning_id, "validation")
         validation = self.quality.validate(word, research, usage, sentences, responses)
-
         if not validation["accepted"]:
             await self.results.mark_failed(learning_id, validation)
             return
