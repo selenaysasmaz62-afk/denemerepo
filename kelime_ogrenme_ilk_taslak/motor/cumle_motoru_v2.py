@@ -68,8 +68,6 @@ class CumleMotoruV2:
                 if len(candidates) >= 15:
                     return candidates[:15]
 
-        # Kullanım bağlamlarını cümle diye kaydetmiyoruz. Bu, Wikipedia gibi
-        # kaynakların tanım/başlık metnini sahte örnek cümleye çevirmesini önler.
         return candidates[:15]
 
     async def _tatoeba_sentences(self, word):
@@ -223,8 +221,6 @@ class CumleMotoruV2:
         if not text:
             return
 
-        # Önce tırnak içindeki gerçek örnekleri al. SEO açıklamalarındaki
-        # tanım metnini değil, doğrudan verilen kullanım cümlesini tercih eder.
         quoted = re.findall(
             r"[\"“”‘’']([^\"“”‘’']{12,220})[\"“”‘’']",
             text,
@@ -235,7 +231,6 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return
 
-        # "2 örnek cümle: 1) ... 2) ..." formatını ayrı cümlelere böl.
         numbered = re.findall(
             r"(?:^|\s)(?:\d+\s*[.)])\s*(.+?)(?=\s+\d+\s*[.)]\s*|$)",
             text,
@@ -246,7 +241,6 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return
 
-        # Yıldız, tire ve madde imiyle verilen örnekleri ayrı ayrı çıkar.
         bullets = re.findall(
             r"(?:^|\s)(?:[*•·]|[-–—])\s*(.+?)(?=\s+(?:[*•·]|[-–—])\s*|$)",
             text,
@@ -263,14 +257,18 @@ class CumleMotoruV2:
             flags=re.IGNORECASE,
         )
         for example in example_matches:
-            # Etiket kısmını temizleyip kalan metni tekrar parçala.
             if example.strip() == text.strip():
                 continue
             self._extract_from_text(word, example, candidates, seen, source, url)
             if len(candidates) >= 15:
                 return
 
-        # Son olarak normal noktalama ile ayrılmış cümleleri değerlendir.
+        # Arama motoru snippet'leri çoğu zaman başlık/SEO/tanım metnidir.
+        # Bu kaynaklarda yalnızca açık biçimde işaretlenmiş veya tırnak içine
+        # alınmış örnekleri kabul et; normal düzyazıyı cümleye dönüştürme.
+        if source == "web_sentence_research":
+            return
+
         parts = re.split(r"(?<=[.!?])\s+|\s*[•·]\s*|\s*\*\s*", text)
         for part in parts:
             self._add_sentence(word, part, candidates, seen, source, url)
