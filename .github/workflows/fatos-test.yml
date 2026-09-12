@@ -18,5 +18,5 @@ jobs:
           python-version: '3.12'
       - name: Syntax kontrolü
         run: python -m compileall -q .
-      - name: Tatoeba ve cümle testi
-        run: python test_ince_cumle.py
+      - name: Tatoeba testi
+        run: python test_tatoeba.py
