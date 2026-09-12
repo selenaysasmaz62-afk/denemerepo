@@ -249,8 +249,8 @@ class CumleMotoruV2:
         seen = set()
 
         url = (
-            "https://context.reverso.net/translation/"
-            "turkish-english/" + quote_plus(word)
+            "https://dictionary.reverso.net/turkish-english/"
+            + quote_plus(word)
         )
 
         raw = await self._fetch_url_text(
@@ -260,25 +260,40 @@ class CumleMotoruV2:
         if not raw:
             return values
 
-        raw = html.unescape(raw)
+        raw = re.sub(
+            r"<script\\b[^>]*>.*?</script>",
+            " ",
+            raw,
+            flags=re.I | re.S,
+        )
+        raw = re.sub(
+            r"<style\\b[^>]*>.*?</style>",
+            " ",
+            raw,
+            flags=re.I | re.S,
+        )
+        raw = re.sub(r"<[^>]+>", " ", raw)
+        raw = self._clean_text(raw)
 
-        parser = _ReversoHTMLParser()
-        try:
-            parser.feed(raw)
-            parser.close()
-        except Exception:
-            return values
+        # Reverso sözlük sayfasındaki tam Türkçe örnekleri ayıkla.
+        marker = "Examples and translations in context"
+        if marker.casefold() in raw.casefold():
+            raw = raw[
+                raw.casefold().find(marker.casefold()) + len(marker):
+            ]
 
-        for text in parser.values:
-            text = self._clean_text(text)
+        parts = re.split(r"(?<=[.!?])\\s+", raw)
 
-            if not text or not self._contains_target_word(word, text):
+        for part in parts:
+            part = self._clean_text(part)
+
+            if not part or not self._contains_target_word(word, part):
                 continue
 
             extracted = []
             self._add_sentence(
                 word,
-                text,
+                part,
                 extracted,
                 set(),
                 "reverso_example",
