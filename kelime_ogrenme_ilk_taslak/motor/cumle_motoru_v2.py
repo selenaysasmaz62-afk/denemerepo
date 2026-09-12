@@ -14,7 +14,7 @@ class CumleMotoruV2:
     """Gerçek Türkçe kullanım cümlelerini birden fazla kaynaktan toplar."""
 
     def __init__(self):
-        self.web = WebArastirici(timeout=12, max_results=8)
+        self.web = WebArastirici(timeout=5, max_results=8)
 
     async def research(self, word, research, usage):
         candidates, seen = [], set()
@@ -68,29 +68,22 @@ class CumleMotoruV2:
         return candidates[:15]
 
     async def _tatoeba_sentences(self, word):
-        urls = (
-            ("https://api.tatoeba.org/v1/sentences?" f"lang=tur&q={quote_plus(word)}&limit=50", "https://api.tatoeba.org/"),
-            ("https://api.tatoeba.org/v1/sentences?" f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50", "https://api.tatoeba.org/"),
-            ("https://tatoeba.org/eng/api_v0/search?" f"from=tur&query={quote_plus(word)}&limit=50", "https://tatoeba.org/"),
-        )
-        for url, source_url in urls:
-            try:
-                payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
-                items = payload.get("data", []) if isinstance(payload, dict) else payload
-                if not isinstance(items, list):
+        url = "https://api.tatoeba.org/v1/sentences?" f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50"
+        try:
+            payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
+            items = payload.get("data", []) if isinstance(payload, dict) else payload
+            if not isinstance(items, list):
+                return []
+            values = []
+            for item in items:
+                if not isinstance(item, dict):
                     continue
-                values = []
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    text = self._clean_text(item.get("text") or item.get("sentence") or "")
-                    if text and self._contains_target_word(word, text):
-                        values.append((text, source_url))
-                if values:
-                    return values
-            except Exception:
-                continue
-        return []
+                text = self._clean_text(item.get("text") or item.get("sentence") or "")
+                if text and self._contains_target_word(word, text):
+                    values.append((text, "https://api.tatoeba.org/"))
+            return values
+        except Exception:
+            return []
 
     async def _dictionary_examples(self, word):
         try:
@@ -135,14 +128,14 @@ class CumleMotoruV2:
     @staticmethod
     def _fetch_json(url):
         request = Request(url, headers={"User-Agent": "FatosKelimeOgrenmeTest/1.4", "Accept": "application/json", "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7"})
-        with urlopen(request, timeout=10) as response:
+        with urlopen(request, timeout=5) as response:
             return response.read().decode("utf-8", errors="replace")
 
     @staticmethod
     def _fetch_html_text(url):
         try:
             request = Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) FatosKelimeOgrenmeTest/1.4", "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7"})
-            with urlopen(request, timeout=10) as response:
+            with urlopen(request, timeout=5) as response:
                 raw = response.read().decode("utf-8", errors="replace")
             raw = re.sub(r"<script\b[^>]*>.*?</script>", " ", raw, flags=re.I | re.S)
             raw = re.sub(r"<style\b[^>]*>.*?</style>", " ", raw, flags=re.I | re.S)
