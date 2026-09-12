@@ -151,23 +151,56 @@ class CumleMotoruV2:
             return ""
 
     async def _tatoeba_sentences(self, word):
-        url = "https://api.tatoeba.org/v1/sentences?" f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50"
-        try:
-            raw = await self._fetch_url_text(url)
-            payload = json.loads(raw)
-            items = payload.get("data", []) if isinstance(payload, dict) else payload
-            if not isinstance(items, list):
-                return []
-            values = []
-            for item in items:
-                if not isinstance(item, dict):
+        # Önce güncel API v1.
+        urls = [
+            (
+                "https://api.tatoeba.org/v1/sentences?"
+                f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50",
+                "https://api.tatoeba.org/",
+            ),
+            # v1 boş/erişilemezse API v0 yedek kaynak.
+            (
+                "https://tatoeba.org/en/api_v0/search?"
+                f"from=tur&query={quote_plus(word)}&sort=relevance"
+                "&orphans=no&unapproved=no&limit=50",
+                "https://tatoeba.org/",
+            ),
+        ]
+
+        for url, source_url in urls:
+            try:
+                raw = await self._fetch_url_text(url)
+                payload = json.loads(raw)
+
+                if isinstance(payload, dict):
+                    items = payload.get("data", [])
+                else:
+                    items = payload
+
+                if not isinstance(items, list):
                     continue
-                text = self._clean_text(item.get("text") or item.get("sentence") or "")
-                if text and self._contains_target_word(word, text):
-                    values.append((text, "https://api.tatoeba.org/"))
-            return values
-        except Exception:
-            return []
+
+                values = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+
+                    text = self._clean_text(
+                        item.get("text")
+                        or item.get("sentence")
+                        or ""
+                    )
+
+                    if text and self._contains_target_word(word, text):
+                        values.append((text, source_url))
+
+                if values:
+                    return values
+
+            except Exception:
+                continue
+
+        return []
 
     async def _dictionary_examples(self, word):
         try:
