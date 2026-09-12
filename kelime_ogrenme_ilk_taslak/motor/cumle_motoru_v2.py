@@ -297,6 +297,34 @@ class CumleMotoruV2:
         if len(sentence) < 12 or len(sentence) > 220:
             return False
         lower = sentence.casefold().replace("\u0307", "")
+
+        # Arama sonucu/meta başlıklarını ve açıklama parçalarını kesin olarak ele.
+        if re.match(r"^\d{1,2}\s+(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}\s*[·•|:-]", sentence):
+            return False
+        if "..." in sentence or "…" in sentence:
+            return False
+        if re.search(r"\b(?:kelimesi|kelimesinin|kelime)\b.*\b(?:cümleler|cümle|kullanımı|anlamı)\b", lower):
+            return False
+        if re.search(r"\b(?:nedir|mıdır|midir|musun|misin|mısın|müsün)\s*[?!]", lower):
+            return False
+        if any(marker in lower for marker in (
+            "kelimesi için",
+            "kelimesinin eş anlamlısı",
+            "kelimesinin anlamı",
+            "kelimesi ile ilgili cümleler",
+            "kelimesi ile ilgili",
+            "kelimesinin ile ilgili",
+            "atasözünün anlamı",
+            "doğru yazılışı:",
+            "nasıl yazılır",
+            "örnek cümle içinde kullanımı",
+            "hakkında merak edilenler",
+            "ifadesini nasıl kullan",
+            "bir işin ya da hareketin",
+            "programıdır",
+            "programı.",
+        )):
+            return False
         if not cls._contains_target_word(word, sentence):
             return False
         if any(marker in lower for marker in (
