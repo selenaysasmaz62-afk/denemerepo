@@ -7,7 +7,7 @@ import re
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
-from arastirma.web_arastirici import WebArastirici
+from arastirma.web_arastirici import WebArastirici, _BingSearchParser
 
 
 class CumleMotoruV2:
@@ -42,7 +42,9 @@ class CumleMotoruV2:
                 f'"{word}" "kullanım örneği"',
                 f'"{word}" günlük kullanım',
             ):
-                data = await self.web.search(query)
+                data = await self._bing_search(query)
+                if not data:
+                    continue
                 for result in data.get("results", []):
                     if not isinstance(result, dict):
                         continue
@@ -67,10 +69,67 @@ class CumleMotoruV2:
 
         return candidates[:15]
 
+    async def _bing_search(self, query):
+        """Tek Bing isteğini ayrı süreçte çalıştırır; ağ kilitlenirse event loop kapanmaz."""
+        url = "https://www.bing.com/search?q=" + quote_plus(query) + "&setlang=tr"
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "curl", "-L", "--silent", "--show-error", "--max-time", "5",
+                "-A", "FatosKelimeOgrenmeTest/1.0", url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=6)
+            if process.returncode != 0 or not stdout:
+                return None
+            results = _BingSearchParser().parse(
+                stdout.decode("utf-8", errors="replace"), url
+            )
+            return {
+                "query": query,
+                "results": results[:8],
+                "error": None,
+                "provider": "https://www.bing.com/search",
+            }
+        except Exception:
+            if process is not None:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            return None
+
+    async def _fetch_url_text(self, url, accept="application/json"):
+        """HTTP isteğini ayrı curl sürecinde yapar; urlopen thread kilitlenmesini önler."""
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "curl", "-L", "--silent", "--show-error", "--max-time", "5",
+                "-A", "FatosKelimeOgrenmeTest/1.4",
+                "-H", f"Accept: {accept}",
+                "-H", "Accept-Language: tr-TR,tr;q=0.9,en;q=0.7",
+                url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=6)
+            if process.returncode != 0 or not stdout:
+                return ""
+            return stdout.decode("utf-8", errors="replace")
+        except Exception:
+            if process is not None:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            return ""
+
     async def _tatoeba_sentences(self, word):
         url = "https://api.tatoeba.org/v1/sentences?" f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50"
         try:
-            payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
+            raw = await self._fetch_url_text(url)
+            payload = json.loads(raw)
             items = payload.get("data", []) if isinstance(payload, dict) else payload
             if not isinstance(items, list):
                 return []
@@ -88,7 +147,8 @@ class CumleMotoruV2:
     async def _dictionary_examples(self, word):
         try:
             url = f"https://api.dictionaryapi.dev/api/v2/entries/tr/{quote_plus(word)}"
-            payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
+            raw = await self._fetch_url_text(url)
+            payload = json.loads(raw)
             values = []
             for entry in payload if isinstance(payload, list) else []:
                 for meaning in entry.get("meanings", []) or []:
@@ -106,7 +166,8 @@ class CumleMotoruV2:
                 "https://tr.wiktionary.org/w/api.php?action=query&prop=extracts"
                 f"&explaintext=1&titles={quote_plus(word)}&format=json&utf8=1"
             )
-            payload = json.loads(await asyncio.to_thread(self._fetch_json, url))
+            raw = await self._fetch_url_text(url)
+            payload = json.loads(raw)
             pages = payload.get("query", {}).get("pages", {})
             values = []
             for page in pages.values():
