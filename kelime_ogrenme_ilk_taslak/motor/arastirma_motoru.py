@@ -19,7 +19,9 @@ class KelimeArastirmaMotoru:
     )
 
     def __init__(self):
-        self.web = WebArastirici(timeout=12, max_results=8)
+        # Mobil/Termux ortamında yavaş veya erişilemeyen bir sağlayıcının
+        # tüm araştırma zincirini uzun süre bloke etmesini önler.
+        self.web = WebArastirici(timeout=5, max_results=8)
 
     async def research(self, word):
         results = []
