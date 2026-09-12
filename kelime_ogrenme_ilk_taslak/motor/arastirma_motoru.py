@@ -28,7 +28,7 @@ class KelimeArastirmaMotoru:
         "gövde anlamlar", "incehesap.com", "muharrem ince",
         "resmi web sitesidir", "erişim tarihi", "kendinize meydan okuyun",
         "daha hafif bir modelden", "bu cümlede ",
-        "cümlede “", "cümlede \"",
+        "cümlede “", "cümlede \"", "mecaz anlam mıdır", "gerçek anlam mıdır",
     )
 
     def __init__(self):
