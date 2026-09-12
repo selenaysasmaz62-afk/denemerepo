@@ -288,6 +288,15 @@ class CumleMotoruV2:
                 return
 
         if source == "web_sentence_research":
+            # Bing snippetini yalnızca noktalama ile ayrılmış gerçek
+            # cümleler halinde değerlendir; tüm snippet'i cümle kabul etme.
+            parts = re.split(r"(?<=[.!?])\s+", text)
+            for part in parts:
+                part = part.strip()
+                if self._contains_target_word(word, part):
+                    self._add_sentence(word, part, candidates, seen, source, url)
+                    if len(candidates) >= 15:
+                        return
             return
 
         parts = re.split(r"(?<=[.!?])\s+|\s*[•·]\s*|\s*\*\s*", text)
@@ -370,7 +379,7 @@ class CumleMotoruV2:
         if re.match(r"^(?:isim|fiil|sıfat|zarf|edat|ünlem|zamir)\s*[:\-]", lower):
             return False
         words = re.findall(r"[\wçğıöşüÇĞİÖŞÜ]+", sentence, flags=re.UNICODE)
-        if len(words) < 4:
+        if len(words) < 3:
             return False
         if sentence.count("|") >= 2 or sentence.count("/") >= 3:
             return False
