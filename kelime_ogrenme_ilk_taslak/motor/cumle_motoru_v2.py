@@ -307,6 +307,12 @@ class CumleMotoruV2:
             return False
         if re.search(r"\b(?:nedir|mıdır|midir|musun|misin|mısın|müsün)\s*[?!]", lower):
             return False
+        # Tek başına başlık/etiket/ürün adı gibi duran kısa parçaları reddet.
+        if re.search(r"\b(?:programı|programıdır|sitesi|sitesidir|ürünü|modeli|markası|başlığı)\.?$", lower):
+            return False
+        if re.match(r"^(?:dünyanın|türkiye'nin|türkiye|en)\s+", lower) and len(words := re.findall(r"[a-zçğıöşüâîû]+", lower)) < 7:
+            return False
+
         if any(marker in lower for marker in (
             "kelimesi için",
             "kelimesinin eş anlamlısı",
