@@ -26,7 +26,7 @@ class CumleMotoruV2:
                     return candidates[:15]
 
         # Öncelik: Tatoeba'dan doğrudan gerçek Türkçe cümleler.
-        for item in self._tatoeba_sentences(word):
+        for item in await self._tatoeba_sentences(word):
             self._add_sentence(
                 word,
                 item.get("sentence", ""),
