@@ -37,8 +37,6 @@ class _HtmlSearchParser(HTMLParser):
             self._snippet_active = True
 
     def handle_endtag(self, tag):
-        # Snippetler çoğu zaman <a> içinde küçük <b>/<span> etiketleri
-        # barındırır. Bu nedenle sadece div kapanışında kapat.
         if tag == "div" and self._snippet_active:
             self._snippet_active = False
         if tag == "a" and self._title_active:
@@ -142,8 +140,8 @@ class WebArastirici:
     """Anahtarsız, yedekli web araştırıcısı.
 
     Sıra:
-      1) DuckDuckGo HTML
-      2) DuckDuckGo Lite
+      1) DuckDuckGo HTML form POST
+      2) DuckDuckGo Lite form POST
       3) DuckDuckGo Instant Answer API
     Bir sağlayıcı sonuç vermezse diğeri denenir.
     """
@@ -159,21 +157,12 @@ class WebArastirici:
         errors = []
 
         for endpoint, parser_cls in (
-            (
-                "https://html.duckduckgo.com/html/?q="
-                + quote_plus(query)
-                + "&kl=tr-tr",
-                _HtmlSearchParser,
-            ),
-            (
-                "https://lite.duckduckgo.com/lite/?q="
-                + quote_plus(query)
-                + "&kl=tr-tr",
-                _LiteSearchParser,
-            ),
+            ("https://html.duckduckgo.com/html/", _HtmlSearchParser),
+            ("https://lite.duckduckgo.com/lite/", _LiteSearchParser),
         ):
             try:
-                html_text = self._fetch(endpoint)
+                form = "q=" + quote_plus(query) + "&kl=tr-tr"
+                html_text = self._fetch(endpoint, data=form.encode("ascii"))
                 if self._looks_like_challenge(html_text):
                     errors.append(f"anti_bot:{endpoint.split('/')[2]}")
                     continue
@@ -188,8 +177,6 @@ class WebArastirici:
             except Exception as exc:
                 errors.append(f"{endpoint.split('/')[2]}:{exc}")
 
-        # Son çare: DDG Instant Answer. Özellikle tek kelimelerde anlam/
-        # açıklama sağlayabilir; genel web sonucu kadar zengin değildir.
         try:
             api_url = (
                 "https://api.duckduckgo.com/?q="
@@ -235,18 +222,25 @@ class WebArastirici:
             "provider": None,
         }
 
-    def _fetch(self, url):
-        request = Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 "
-                    "Chrome/120 Safari/537.36"
-                ),
-                "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
-                "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-            },
-        )
+    def _fetch(self, url, data=None):
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 "
+                "Chrome/120 Mobile Safari/537.36"
+            ),
+            "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        }
+        if data is not None:
+            headers.update({
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": url,
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
+            })
+        request = Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
         with urlopen(request, timeout=self.timeout) as response:
             return response.read().decode("utf-8", errors="replace")
 
