@@ -58,6 +58,12 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return candidates[:15]
 
+        # Reverso Context: gerçek Türkçe kullanım cümleleri için özel kaynak.
+        for sentence, url in await self._reverso_examples(word):
+            self._add_sentence(word, sentence, candidates, seen, "reverso_example", url)
+            if len(candidates) >= 15:
+                return candidates[:15]
+
         if len(candidates) < 6:
             for query in (
                 f'"{word}" "örnek cümle"',
@@ -201,6 +207,55 @@ class CumleMotoruV2:
                 continue
 
         return []
+
+    async def _reverso_examples(self, word):
+        values = []
+        seen = set()
+
+        queries = (
+            f'site:context.reverso.net/translation/turkish-english "{word}"',
+            f'site:context.reverso.net "Türkçe" "{word}" "Örnekler"',
+        )
+
+        source_url = (
+            "https://context.reverso.net/translation/turkish-english/"
+            + quote_plus(word)
+        )
+
+        for query in queries:
+            data = await self._bing_search(query)
+            if not data:
+                continue
+
+            for result in data.get("results", []):
+                if not isinstance(result, dict):
+                    continue
+
+                snippet = self._clean_text(result.get("snippet", ""))
+                if not snippet:
+                    continue
+
+                extracted = []
+                self._extract_from_text(
+                    word,
+                    snippet,
+                    extracted,
+                    set(),
+                    "reverso_example",
+                    source_url,
+                )
+
+                for item in extracted:
+                    text = item.get("sentence", "")
+                    key = " ".join(text.casefold().split())
+                    if key and key not in seen:
+                        seen.add(key)
+                        values.append((text, source_url))
+
+                if len(values) >= 15:
+                    return values[:15]
+
+        return values[:15]
 
     async def _dictionary_examples(self, word):
         try:
