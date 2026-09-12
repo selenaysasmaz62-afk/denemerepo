@@ -61,8 +61,10 @@ class KelimeArastirmaMotoru:
         results = []
         seen = set()
         queries = (
-            f'"{word}" TDK anlamı', f'"{word}" ne demek Türkçe',
-            f'"{word}" sözlük anlamı', f'"{word}" kullanım Türkçe',
+            f'"{word}" anlamı',
+            f'"{word}" ne demek',
+            f'"{word}" sözlük',
+            f'"{word}" Türkçe anlamı',
         )
         responses = await asyncio.gather(*(self._bing_search(query) for query in queries), return_exceptions=True)
         for data in responses:
@@ -71,13 +73,18 @@ class KelimeArastirmaMotoru:
                 if len(results) >= 16:
                     break
 
+        # Arama motoru belirli sorguları boş döndürürse daha genel tek bir yedek sorgu dene.
+        if not results:
+            fallback = await self._bing_search(f'"{word}" Türkçe')
+            if isinstance(fallback, dict):
+                self._append_results(results, seen, fallback.get("results", []))
+
         ranked = sorted(results, key=lambda item: self._result_score(word, item), reverse=True)
         senses = self._build_senses(word, ranked)
         return {"word": word, "senses": senses, "meanings": [s["definition"] for s in senses][:12], "sources": ranked[:12]}
 
     async def _usage_web_search(self, query):
-        data = await self._bing_search(query)
-        return data
+        return await self._bing_search(query)
 
     async def research_usage(self, word, research):
         contexts = []
