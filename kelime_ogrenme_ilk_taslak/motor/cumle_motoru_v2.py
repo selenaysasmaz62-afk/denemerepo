@@ -305,8 +305,11 @@ class CumleMotoruV2:
             "kelimesi ile ilgili cümleler", "kelimesi ile ilgili", "kelimesinin ile ilgili", "bir cümlede", "örnek cümleler",
             "ifadesini nasıl kullanacağınızı", "aşağıdaki anlamlara gelebilir", "gerçek ve mecaz anlam", "mecaz anlamda",
             "cevap:", "cevabımda", "aşağıda", "örnekler vereyim", "çok anlamlılık denir", "soru çözme",
+            "mecaz anlam mıdır", "gerçek anlam mıdır", "kelimesinin anlamı", "kelimesi mecaz",
             "http://", "https://", "www.",
         )):
+            return False
+        if "…" in sentence or "..." in sentence:
             return False
         if re.match(r"^(?:isim|fiil|sıfat|zarf|edat|ünlem|zamir)\s*[:\-]", lower):
             return False
