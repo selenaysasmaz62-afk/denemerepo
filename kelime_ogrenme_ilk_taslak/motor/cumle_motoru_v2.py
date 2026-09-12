@@ -51,12 +51,9 @@ class CumleMotoruV2:
                     if not snippet:
                         continue
                     self._extract_from_text(word, snippet, candidates, seen, "web_sentence_research", url)
-
                     if len(candidates) >= 15:
                         return candidates[:15]
 
-        # Araştırma kaynağı yalnızca açıkça "Örnek:" biçiminde gerçek örnek
-        # veriyorsa kullanılabilir. Tanım/snippet artık cümle değildir.
         if len(candidates) < 3 and isinstance(research, dict):
             for result in research.get("sources", []) or []:
                 if not isinstance(result, dict):
@@ -72,21 +69,9 @@ class CumleMotoruV2:
 
     async def _tatoeba_sentences(self, word):
         urls = (
-            (
-                "https://api.tatoeba.org/v1/sentences?"
-                f"lang=tur&q={quote_plus(word)}&limit=50",
-                "https://api.tatoeba.org/",
-            ),
-            (
-                "https://api.tatoeba.org/v1/sentences?"
-                f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50",
-                "https://api.tatoeba.org/",
-            ),
-            (
-                "https://tatoeba.org/eng/api_v0/search?"
-                f"from=tur&query={quote_plus(word)}&limit=50",
-                "https://tatoeba.org/",
-            ),
+            ("https://api.tatoeba.org/v1/sentences?" f"lang=tur&q={quote_plus(word)}&limit=50", "https://api.tatoeba.org/"),
+            ("https://api.tatoeba.org/v1/sentences?" f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50", "https://api.tatoeba.org/"),
+            ("https://tatoeba.org/eng/api_v0/search?" f"from=tur&query={quote_plus(word)}&limit=50", "https://tatoeba.org/"),
         )
         for url, source_url in urls:
             try:
@@ -140,10 +125,7 @@ class CumleMotoruV2:
                     if not line or not re.search(r"(?:örnek|örnekler|kullanım)", line, re.I):
                         continue
                     extracted = []
-                    self._extract_from_text(
-                        word, line, extracted, set(),
-                        "vikisozluk_example", "https://tr.wiktionary.org/"
-                    )
+                    self._extract_from_text(word, line, extracted, set(), "vikisozluk_example", "https://tr.wiktionary.org/")
                     for item in extracted:
                         values.append((item["sentence"], "https://tr.wiktionary.org/"))
             return values
@@ -152,27 +134,14 @@ class CumleMotoruV2:
 
     @staticmethod
     def _fetch_json(url):
-        request = Request(
-            url,
-            headers={
-                "User-Agent": "FatosKelimeOgrenmeTest/1.4",
-                "Accept": "application/json",
-                "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
-            },
-        )
+        request = Request(url, headers={"User-Agent": "FatosKelimeOgrenmeTest/1.4", "Accept": "application/json", "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7"})
         with urlopen(request, timeout=10) as response:
             return response.read().decode("utf-8", errors="replace")
 
     @staticmethod
     def _fetch_html_text(url):
         try:
-            request = Request(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) FatosKelimeOgrenmeTest/1.4",
-                    "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
-                },
-            )
+            request = Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) FatosKelimeOgrenmeTest/1.4", "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7"})
             with urlopen(request, timeout=10) as response:
                 raw = response.read().decode("utf-8", errors="replace")
             raw = re.sub(r"<script\b[^>]*>.*?</script>", " ", raw, flags=re.I | re.S)
@@ -194,21 +163,13 @@ class CumleMotoruV2:
         escaped = re.escape(word.strip())
         if not escaped:
             return False
-        return re.search(
-            rf"(?<![\wçğıöşüÇĞİÖŞÜ]){escaped}(?![\wçğıöşüÇĞİÖŞÜ])",
-            text,
-            flags=re.IGNORECASE,
-        ) is not None
+        return re.search(rf"(?<![\wçğıöşüÇĞİÖŞÜ]){escaped}(?![\wçğıöşüÇĞİÖŞÜ])", text, flags=re.IGNORECASE) is not None
 
     def _extract_research_examples(self, word, text, candidates, seen, source, url=""):
         if not text:
             return
         text = self._clean_text(text)
-        matches = re.findall(
-            r"(?:örnek cümle|örnek kullanım|kullanım örneği|example|örnek)\s*[:\-–—]\s*(.+)",
-            text,
-            flags=re.IGNORECASE,
-        )
+        matches = re.findall(r"(?:örnek cümle|örnek kullanım|kullanım örneği|example|örnek)\s*[:\-–—]\s*(.+)", text, flags=re.IGNORECASE)
         for match in matches:
             self._extract_from_text(word, match, candidates, seen, source, url)
             if len(candidates) >= 15:
@@ -221,41 +182,25 @@ class CumleMotoruV2:
         if not text:
             return
 
-        quoted = re.findall(
-            r"[\"“”‘’']([^\"“”‘’']{12,220})[\"“”‘’']",
-            text,
-            flags=re.UNICODE,
-        )
+        quoted = re.findall(r"[\"“”‘’']([^\"“”‘’']{12,220})[\"“”‘’']", text, flags=re.UNICODE)
         for item in quoted:
             self._add_sentence(word, item, candidates, seen, source, url)
             if len(candidates) >= 15:
                 return
 
-        numbered = re.findall(
-            r"(?:^|\s)(?:\d+\s*[.)])\s*(.+?)(?=\s+\d+\s*[.)]\s*|$)",
-            text,
-            flags=re.IGNORECASE,
-        )
+        numbered = re.findall(r"(?:^|\s)(?:\d+\s*[.)])\s*(.+?)(?=\s+\d+\s*[.)]\s*|$)", text, flags=re.IGNORECASE)
         for item in numbered:
             self._add_sentence(word, item, candidates, seen, source, url)
             if len(candidates) >= 15:
                 return
 
-        bullets = re.findall(
-            r"(?:^|\s)(?:[*•·]|[-–—])\s*(.+?)(?=\s+(?:[*•·]|[-–—])\s*|$)",
-            text,
-            flags=re.UNICODE,
-        )
+        bullets = re.findall(r"(?:^|\s)(?:[*•·]|[-–—])\s*(.+?)(?=\s+(?:[*•·]|[-–—])\s*|$)", text, flags=re.UNICODE)
         for item in bullets:
             self._add_sentence(word, item, candidates, seen, source, url)
             if len(candidates) >= 15:
                 return
 
-        example_matches = re.findall(
-            r"(?:örnek cümle|örnek kullanım|kullanım örneği|example|örnek)\s*[:\-–—]\s*(.+)",
-            text,
-            flags=re.IGNORECASE,
-        )
+        example_matches = re.findall(r"(?:örnek cümle|örnek kullanım|kullanım örneği|example|örnek)\s*[:\-–—]\s*(.+)", text, flags=re.IGNORECASE)
         for example in example_matches:
             if example.strip() == text.strip():
                 continue
@@ -263,9 +208,6 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return
 
-        # Arama motoru snippet'leri çoğu zaman başlık/SEO/tanım metnidir.
-        # Bu kaynaklarda yalnızca açık biçimde işaretlenmiş veya tırnak içine
-        # alınmış örnekleri kabul et; normal düzyazıyı cümleye dönüştürme.
         if source == "web_sentence_research":
             return
 
@@ -279,10 +221,7 @@ class CumleMotoruV2:
         sentence = self._clean_text(sentence)
         sentence = sentence.strip(" \t\r\n-–—•·*\"'“”‘’")
         sentence = re.sub(r"^(?:\d+\s*[.)]|[-–—•·*])\s*", "", sentence).strip()
-        sentence = re.sub(
-            r"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği|örnek)\s*[:\-–—]?\s*",
-            "", sentence, flags=re.IGNORECASE,
-        ).strip()
+        sentence = re.sub(r"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği|örnek)\s*[:\-–—]?\s*", "", sentence, flags=re.IGNORECASE).strip()
         if not self._is_valid_candidate(word, sentence):
             return
         if sentence[-1] not in ".!?":
@@ -296,15 +235,15 @@ class CumleMotoruV2:
     def _is_valid_candidate(cls, word, sentence):
         if len(sentence) < 12 or len(sentence) > 220:
             return False
-        lower = sentence.casefold()
+        lower = sentence.casefold().replace("\u0307", "")
         if not cls._contains_target_word(word, sentence):
             return False
         if any(marker in lower for marker in (
-            "arama sonuçları", "wikipedia", "translate", "çeviri", "giriş yap",
-            "devamını oku", "cookie", "gizlilik politikası", "sözlük", "ne demek",
-            "numaralı adam", "film", "albüm", "şarkı", "oyun", "dizi",
-            "kelimesi ile ilgili cümleler", "bir cümlede", "örnek cümleler",
-            "ifadesini nasıl kullanacağınızı", "aşağıdaki anlamlara gelebilir",
+            "arama sonuçları", "wikipedia", "translate", "çeviri", "giriş yap", "devamını oku", "cookie",
+            "gizlilik politikası", "sözlük", "ne demek", "numaralı adam", "film", "albüm", "şarkı", "oyun", "dizi",
+            "kelimesi ile ilgili cümleler", "kelimesi ile ilgili", "kelimesinin ile ilgili", "bir cümlede", "örnek cümleler",
+            "ifadesini nasıl kullanacağınızı", "aşağıdaki anlamlara gelebilir", "gerçek ve mecaz anlam", "mecaz anlamda",
+            "cevap:", "cevabımda", "aşağıda", "örnekler vereyim", "çok anlamlılık denir", "soru çözme",
             "http://", "https://", "www.",
         )):
             return False
