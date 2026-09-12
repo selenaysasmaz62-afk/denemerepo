@@ -34,36 +34,15 @@ class KelimeArastirmaMotoru:
     def __init__(self):
         self.web = WebArastirici(timeout=5, max_results=8)
 
-    async def research(self, word):
-        results = []
-        seen = set()
-        queries = (
-            f'"{word}" TDK anlamı', f'"{word}" ne demek Türkçe',
-            f'"{word}" sözlük anlamı', f'"{word}" kullanım Türkçe',
-        )
-        for query in queries:
-            data = await self.web.search(query)
-            self._append_results(results, seen, data.get("results", []))
-            if len(results) >= 16:
-                break
-        dictionary = await self._dictionary_results(word)
-        self._append_results(results, seen, dictionary)
-        if len(results) < 4:
-            wikipedia = await self._wikipedia_results(word)
-            self._append_results(results, seen, wikipedia)
-        ranked = sorted(results, key=lambda item: self._result_score(word, item), reverse=True)
-        senses = self._build_senses(word, ranked)
-        return {"word": word, "senses": senses, "meanings": [s["definition"] for s in senses][:12], "sources": ranked[:12]}
-
-    async def _usage_web_search(self, query):
-        """Tek Bing isteğini ayrı süreçte çalıştırır; ağ kilitlenirse event loop kapanmaz."""
+    async def _bing_search(self, query):
         url = "https://www.bing.com/search?q=" + quote_plus(query) + "&setlang=tr"
+        process = None
         try:
             process = await asyncio.create_subprocess_exec(
-                "curl", "-L", "--silent", "--show-error", "--max-time", "5",
+                "curl", "-L", "--silent", "--max-time", "5",
                 "-A", "FatosKelimeOgrenmeTest/1.0", url,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=6)
             if process.returncode != 0 or not stdout:
@@ -71,11 +50,34 @@ class KelimeArastirmaMotoru:
             results = _BingSearchParser().parse(stdout.decode("utf-8", errors="replace"), url)
             return {"query": query, "results": results[:8], "error": None, "provider": "https://www.bing.com/search"}
         except Exception:
-            try:
-                process.kill()
-            except Exception:
-                pass
+            if process is not None:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
             return None
+
+    async def research(self, word):
+        results = []
+        seen = set()
+        queries = (
+            f'"{word}" TDK anlamı', f'"{word}" ne demek Türkçe',
+            f'"{word}" sözlük anlamı', f'"{word}" kullanım Türkçe',
+        )
+        responses = await asyncio.gather(*(self._bing_search(query) for query in queries), return_exceptions=True)
+        for data in responses:
+            if isinstance(data, dict):
+                self._append_results(results, seen, data.get("results", []))
+                if len(results) >= 16:
+                    break
+
+        ranked = sorted(results, key=lambda item: self._result_score(word, item), reverse=True)
+        senses = self._build_senses(word, ranked)
+        return {"word": word, "senses": senses, "meanings": [s["definition"] for s in senses][:12], "sources": ranked[:12]}
+
+    async def _usage_web_search(self, query):
+        data = await self._bing_search(query)
+        return data
 
     async def research_usage(self, word, research):
         contexts = []
