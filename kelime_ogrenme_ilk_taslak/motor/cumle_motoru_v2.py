@@ -100,28 +100,6 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return candidates[:15]
 
-        if len(candidates) < 6:
-            for query in (
-                f'"{word}" "örnek cümle"',
-                f'"{word}" "örnek kullanım"',
-                f'"{word}" "cümle içinde"',
-                f'"{word}" "kullanım örneği"',
-                f'"{word}" günlük kullanım',
-            ):
-                data = await self._bing_search(query)
-                if not data:
-                    continue
-                for result in data.get("results", []):
-                    if not isinstance(result, dict):
-                        continue
-                    snippet = result.get("snippet", "") or ""
-                    url = result.get("url", "") or ""
-                    if not snippet:
-                        continue
-                    self._extract_from_text(word, snippet, candidates, seen, "web_sentence_research", url)
-                    if len(candidates) >= 15:
-                        return candidates[:15]
-
         if len(candidates) < 3 and isinstance(research, dict):
             for result in research.get("sources", []) or []:
                 if not isinstance(result, dict):
@@ -193,19 +171,18 @@ class CumleMotoruV2:
             return ""
 
     async def _tatoeba_sentences(self, word):
-        # Önce güncel API v1.
+        # Tatoeba API v1:
+        # - Türkçe cümle
+        # - hedef kelimenin tam eşleşmesi
+        # - en az 3 kelime
+        # - yetim/onaysız cümle yok
         urls = [
             (
                 "https://api.tatoeba.org/v1/sentences?"
-                f"lang=tur&q={quote_plus(word)}&sort=relevance&limit=50",
+                f"lang=tur&q={quote_plus('=' + word)}"
+                "&word_count=3-&is_orphan=no&is_unapproved=no"
+                "&sort=relevance&limit=50",
                 "https://api.tatoeba.org/",
-            ),
-            # v1 boş/erişilemezse API v0 yedek kaynak.
-            (
-                "https://tatoeba.org/en/api_v0/search?"
-                f"from=tur&query={quote_plus(word)}&sort=relevance"
-                "&orphans=no&unapproved=no&limit=50",
-                "https://tatoeba.org/",
             ),
         ]
 
@@ -214,15 +191,13 @@ class CumleMotoruV2:
                 raw = await self._fetch_url_text(url)
                 payload = json.loads(raw)
 
-                if isinstance(payload, dict):
-                    items = payload.get("data", [])
-                else:
-                    items = payload
-
+                items = payload.get("data", []) if isinstance(payload, dict) else payload
                 if not isinstance(items, list):
                     continue
 
                 values = []
+                seen = set()
+
                 for item in items:
                     if not isinstance(item, dict):
                         continue
@@ -233,8 +208,24 @@ class CumleMotoruV2:
                         or ""
                     )
 
-                    if text and self._contains_target_word(word, text):
-                        values.append((text, source_url))
+                    if not text:
+                        continue
+
+                    if not self._contains_target_word(word, text):
+                        continue
+
+                    if len(re.findall(r"\\S+", text)) < 3:
+                        continue
+
+                    key = " ".join(text.casefold().split())
+                    if key in seen:
+                        continue
+
+                    seen.add(key)
+                    values.append((text, source_url))
+
+                    if len(values) >= 15:
+                        break
 
                 if values:
                     return values
