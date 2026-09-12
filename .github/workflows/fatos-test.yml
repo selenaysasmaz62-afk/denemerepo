@@ -1,0 +1,22 @@
+name: Fatos Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kelime_ogrenme_ilk_taslak
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax kontrolü
+        run: python -m compileall -q .
+      - name: Tatoeba ve cümle testi
+        run: python test_ince_cumle.py
