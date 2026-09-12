@@ -212,50 +212,55 @@ class CumleMotoruV2:
         values = []
         seen = set()
 
-        queries = (
-            f'site:context.reverso.net/translation/turkish-english "{word}" '
-            f'-Muharrem -CHP -haber -biyografi -milletvekili -parti',
-            f'site:context.reverso.net/translation/turkish-english "{word}" '
-            f'"örnek" -Muharrem -CHP -haber -biyografi',
+        url = (
+            "https://context.reverso.net/translation/"
+            "turkish-english/" + quote_plus(word)
         )
 
-        source_url = (
-            "https://context.reverso.net/translation/turkish-english/"
-            + quote_plus(word)
+        raw = await self._fetch_url_text(
+            url,
+            accept="text/html,application/xhtml+xml",
+        )
+        if not raw:
+            return values
+
+        # Reverso'nun gerçek Türkçe örneklerini sayfadan al.
+        raw = html.unescape(raw)
+
+        patterns = (
+            r'"text":"([^"]{12,300})"',
+            r'data-value="([^"]{12,300})"',
+            r'class="example[^"]*"[^>]*>(.*?)</',
         )
 
-        for query in queries:
-            data = await self._bing_search(query)
-            if not data:
-                continue
+        for pattern in patterns:
+            for match in re.findall(pattern, raw, flags=re.I | re.S):
+                text = re.sub(r"<[^>]+>", " ", match)
+                text = self._clean_text(text)
 
-            for result in data.get("results", []):
-                if not isinstance(result, dict):
-                    continue
-
-                snippet = self._clean_text(result.get("snippet", ""))
-                if not snippet:
+                if not text or not self._contains_target_word(word, text):
                     continue
 
                 extracted = []
                 self._extract_from_text(
                     word,
-                    snippet,
+                    text,
                     extracted,
                     set(),
                     "reverso_example",
-                    source_url,
+                    url,
                 )
 
                 for item in extracted:
-                    text = item.get("sentence", "")
-                    key = " ".join(text.casefold().split())
+                    sentence = item.get("sentence", "")
+                    key = " ".join(sentence.casefold().split())
+
                     if key and key not in seen:
                         seen.add(key)
-                        values.append((text, source_url))
+                        values.append((sentence, url))
 
-                if len(values) >= 15:
-                    return values[:15]
+                    if len(values) >= 15:
+                        return values[:15]
 
         return values[:15]
 
