@@ -59,24 +59,15 @@ class KelimeArastirmaMotoru:
         contexts = []
         patterns = []
         seen = set()
-        queries = (
-            f'"{word}" örnek cümle',
-            f'"{word}" cümle içinde kullanım',
-            f'"{word}" günlük kullanım örnekleri',
-        )
+        query = f'"{word}" "örnek cümle"'
 
-        async def safe_search(query):
-            try:
-                return await asyncio.wait_for(self.web.search(query), timeout=8)
-            except Exception:
-                return None
+        try:
+            data = await asyncio.wait_for(self.web.search(query), timeout=12)
+        except Exception:
+            data = None
 
-        responses = await asyncio.gather(*(safe_search(query) for query in queries))
-        for data in responses:
-            if isinstance(data, dict):
-                self._append_contexts(contexts, seen, data.get("results", []), word)
-            if len(contexts) >= 12:
-                break
+        if isinstance(data, dict):
+            self._append_contexts(contexts, seen, data.get("results", []), word)
 
         if not contexts:
             self._append_contexts(contexts, seen, research.get("sources", []) if isinstance(research, dict) else [], word)
@@ -94,7 +85,7 @@ class KelimeArastirmaMotoru:
         text = f"{title} {snippet}"
         score = 0
         if word.casefold() in title: score += 3
-        for marker in ("tdk", "sözlük", "anlamı", "ne demek", "tanım", "dictionary"):
+        for marker in ("tdk", "sözlük", "anlamı", "ne demek", "tanım", "dictionary"): 
             if marker in text: score += 4
         if "wikipedia" in title: score += 1
         if any(marker in title for marker in cls._JUNK_TITLE): score -= 10
