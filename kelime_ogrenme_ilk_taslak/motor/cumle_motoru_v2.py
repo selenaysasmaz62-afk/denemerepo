@@ -2,12 +2,48 @@ from __future__ import annotations
 
 import asyncio
 import html
+from html.parser import HTMLParser
 import json
 import re
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
 from arastirma.web_arastirici import WebArastirici, _BingSearchParser
+
+
+class _ReversoHTMLParser(HTMLParser):
+    """Reverso HTML içindeki tam kaynak cümlelerini çıkarır."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.depth = 0
+        self.capture_depth = None
+        self.buffer = []
+        self.values = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        classes = set((attrs.get("class", "") or "").casefold().split())
+
+        self.depth += 1
+
+        if tag.lower() == "span" and "text" in classes:
+            self.capture_depth = self.depth
+            self.buffer = []
+
+    def handle_data(self, data):
+        if self.capture_depth is not None:
+            self.buffer.append(data)
+
+    def handle_endtag(self, tag):
+        if self.capture_depth == self.depth:
+            text = " ".join("".join(self.buffer).split())
+            if text:
+                self.values.append(text)
+            self.capture_depth = None
+            self.buffer = []
+
+        self.depth = max(0, self.depth - 1)
 
 
 class CumleMotoruV2:
@@ -224,43 +260,41 @@ class CumleMotoruV2:
         if not raw:
             return values
 
-        # Reverso'nun gerçek Türkçe örneklerini sayfadan al.
         raw = html.unescape(raw)
 
-        patterns = (
-            r'"text":"([^"]{12,300})"',
-            r'data-value="([^"]{12,300})"',
-            r'class="example[^"]*"[^>]*>(.*?)</',
-        )
+        parser = _ReversoHTMLParser()
+        try:
+            parser.feed(raw)
+            parser.close()
+        except Exception:
+            return values
 
-        for pattern in patterns:
-            for match in re.findall(pattern, raw, flags=re.I | re.S):
-                text = re.sub(r"<[^>]+>", " ", match)
-                text = self._clean_text(text)
+        for text in parser.values:
+            text = self._clean_text(text)
 
-                if not text or not self._contains_target_word(word, text):
-                    continue
+            if not text or not self._contains_target_word(word, text):
+                continue
 
-                extracted = []
-                self._extract_from_text(
-                    word,
-                    text,
-                    extracted,
-                    set(),
-                    "reverso_example",
-                    url,
-                )
+            extracted = []
+            self._add_sentence(
+                word,
+                text,
+                extracted,
+                set(),
+                "reverso_example",
+                url,
+            )
 
-                for item in extracted:
-                    sentence = item.get("sentence", "")
-                    key = " ".join(sentence.casefold().split())
+            for item in extracted:
+                sentence = item.get("sentence", "")
+                key = " ".join(sentence.casefold().split())
 
-                    if key and key not in seen:
-                        seen.add(key)
-                        values.append((sentence, url))
+                if key and key not in seen:
+                    seen.add(key)
+                    values.append((sentence, url))
 
-                    if len(values) >= 15:
-                        return values[:15]
+                if len(values) >= 15:
+                    return values[:15]
 
         return values[:15]
 
