@@ -288,34 +288,7 @@ class CumleMotoruV2:
                 return
 
         if source == "web_sentence_research":
-            # Bing snippetlerini doğrudan cümle kabul etme.
-            # Yalnızca gerçekten cümle görünümünde olan parçaları kabul et.
-            if not sentence or not re.match(r"^[A-ZÇĞİÖŞÜ]", sentence):
-                return
-            if not re.search(r"[.!?]$", sentence):
-                return
-            web_lower = sentence.casefold().replace("\u0307", "")
-            if "..." in sentence or "…" in sentence:
-                return
-            if re.match(r"^(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}", sentence, re.IGNORECASE):
-                return
-            if re.match(r"^\d{1,2}\s+(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}", sentence, re.IGNORECASE):
-                return
-            if any(marker in web_lower for marker in (
-                "örnek cümle", "örnek cümle:", "örnek kullanım",
-                "anlamı", "anlamıdır", "anlamı:", "sıfat olarak",
-                "isim olarak", "fiil olarak", "kelimesinin",
-                "kelimesi", "nasıl kullanılır", "cümle:",
-                "cümleler", "sözlük", "türkçenin en", "türkçede",
-            )):
-                return
-            if re.search(r"\b(?:ve|ile|için|olarak|ayrıca|gibi|diye)\s*[.!?]$", web_lower):
-                return
-            words = sentence.split()
-            if len(words) < 4:
-                return
-            self._add_sentence(word, sentence, candidates, seen, source, url)
-            return
+            # Önce noktalama ile ayrılmış gerçek cümleleri dene.
             parts = re.split(r"(?<=[.!?])\s+", text)
             for part in parts:
                 part = part.strip()
@@ -323,25 +296,6 @@ class CumleMotoruV2:
                     self._add_sentence(word, part, candidates, seen, source, url)
                     if len(candidates) >= 15:
                         return
-
-            # Bing bazı gerçek cümleleri noktalamasız snippet olarak döndürür.
-            # Bu durumda hedef kelimenin çevresindeki kısa cümle parçasını dene.
-            if len(candidates) < 15 and self._contains_target_word(word, text):
-                words = text.split()
-                target_index = next(
-                    (
-                        i for i, value in enumerate(words)
-                        if self._contains_target_word(word, value)
-                    ),
-                    None,
-                )
-                if target_index is not None:
-                    start = max(0, target_index - 7)
-                    end = min(len(words), target_index + 8)
-                    fragment = " ".join(words[start:end]).strip()
-                    fragment = re.sub(r"^[^A-Za-zÇĞİÖŞÜçğıöşü]+", "", fragment)
-                    fragment = re.sub(r"[^A-Za-zÇĞİÖŞÜçğıöşü0-9.,!?;:()'’\- ]+$", "", fragment)
-                    self._add_sentence(word, fragment, candidates, seen, source, url)
 
             return
 
@@ -358,31 +312,110 @@ class CumleMotoruV2:
         # Web arama sonuçlarında açıklama/parça cümleleri gerçek kullanım
         # cümlesi değildir. Bunları daha validation'a gelmeden ele.
         if source == "web_sentence_research":
-            # Bing snippetlerini doğrudan cümle kabul etme.
-            # Yalnızca gerçekten cümle görünümünde olan parçaları kabul et.
-            if not sentence or not re.match(r"^[A-ZÇĞİÖŞÜ]", sentence):
-                return
-            if not re.search(r"[.!?]$", sentence):
-                return
             web_lower = sentence.casefold().replace("\u0307", "")
-            if "..." in sentence or "…" in sentence:
-                return
-            if re.match(r"^(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}", sentence, re.IGNORECASE):
-                return
-            if re.match(r"^\d{1,2}\s+(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}", sentence, re.IGNORECASE):
-                return
             if any(marker in web_lower for marker in (
                 "örnek cümle", "örnek cümle:", "örnek kullanım",
-                "anlamı", "anlamıdır", "anlamı:", "sıfat olarak",
-                "isim olarak", "fiil olarak", "kelimesinin",
-                "kelimesi", "nasıl kullanılır", "cümle:",
+                "anlamını", "anlamıdır", "anlamı", "sıfat olarak",
+                "isim olarak", "fiil olarak", "kelimesini içeren",
+                "kelimesinin", "nasıl kullanılır", "cümle:",
                 "cümleler", "sözlük", "türkçenin en", "türkçede",
             )):
                 return
-            if re.search(r"\b(?:ve|ile|için|olarak|ayrıca|gibi|diye)\s*[.!?]$", web_lower):
+            if re.match(
+                r"^\s*(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}\s*[·•|:-]",
+                sentence,
+                flags=re.IGNORECASE,
+            ):
                 return
-            words = sentence.split()
-            if len(words) < 4:
+            # Yarım bırakılmış Bing snippetlerini kabul etme.
+            if re.search(
+                r"\b(?:kimse|ki|ise|olan|olarak|için|ve|veya|ile|bir|bu|şu|o)\s*[.!?]?$",
+                web_lower,
+            ):
                 return
-            self._add_sentence(word, sentence, candidates, seen, source, url)
+        sentence = re.sub(r"^(?:\d+\s*[.)]|[-–—•·*])\s*", "", sentence).strip()
+        sentence = re.sub(r"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği|örnek)\s*[:\-–—]?\s*", "", sentence, flags=re.IGNORECASE).strip()
+        if not self._is_valid_candidate(word, sentence):
             return
+        if sentence[-1] not in ".!?":
+            sentence += "."
+        key = " ".join(sentence.casefold().split())
+        if key not in seen:
+            seen.add(key)
+            candidates.append({"sentence": sentence, "source": source, "url": url})
+
+    @classmethod
+    def _is_valid_candidate(cls, word, sentence):
+        if len(sentence) < 12 or len(sentence) > 220:
+            return False
+        lower = sentence.casefold().replace("\u0307", "")
+
+        # Arama sonucu/meta başlıklarını ve açıklama parçalarını kesin olarak ele.
+        if re.match(r"^\d{1,2}\s+(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}\s*[·•|:-]", sentence):
+            return False
+        if "..." in sentence or "…" in sentence:
+            return False
+        if re.search(r"\b(?:gerçek|mecaz)\s+anlam\b", lower):
+            return False
+        if re.search(r"\b(?:anlamı|anlamında|anlamıyla)\b", lower) and re.search(r"\b(?:kelime|kelimesi|kelimesinin)\b", lower):
+            return False
+        if re.search(r"\b(?:kelimesi|kelimesinin|kelime)\b.*\b(?:cümleler|cümle|kullanımı|anlamı)\b", lower):
+            return False
+        if re.search(r"\b(?:nedir|mıdır|midir|musun|misin|mısın|müsün)\s*[?!]", lower):
+            return False
+        # Tek başına başlık/etiket/ürün adı gibi duran kısa parçaları reddet.
+        if re.search(r"\b(?:programı|programıdır|sitesi|sitesidir|ürünü|modeli|markası|başlığı)\.?$", lower):
+            return False
+        if re.match(r"^(?:dünyanın|türkiye'nin|türkiye|en)\s+", lower) and len(words := re.findall(r"[a-zçğıöşüâîû]+", lower)) < 7:
+            return False
+
+        if any(marker in lower for marker in (
+            "kelimesi için",
+            "kelimesinin eş anlamlısı",
+            "kelimesinin anlamı",
+            "kelimesi ile ilgili cümleler",
+            "kelimesi ile ilgili",
+            "kelimesinin ile ilgili",
+            "atasözünün anlamı",
+            "doğru yazılışı:",
+            "nasıl yazılır",
+            "örnek cümle içinde kullanımı",
+            "hakkında merak edilenler",
+            "ifadesini nasıl kullan",
+            "bir işin ya da hareketin",
+            "programıdır",
+            "programı.",
+        )):
+            return False
+        if not cls._contains_target_word(word, sentence):
+            return False
+        if any(marker in lower for marker in (
+            "arama sonuçları", "wikipedia", "translate", "çeviri", "giriş yap", "devamını oku", "cookie",
+            "gizlilik politikası", "sözlük", "ne demek", "numaralı adam", "film", "albüm", "şarkı", "oyun", "dizi",
+            "kelimesi ile ilgili cümleler", "kelimesi ile ilgili", "kelimesinin ile ilgili", "bir cümlede", "örnek cümleler",
+            "ifadesini nasıl kullanacağınızı", "aşağıdaki anlamlara gelebilir", "gerçek ve mecaz anlam", "mecaz anlamda",
+            "cevap:", "cevabımda", "aşağıda", "örnekler vereyim", "çok anlamlılık denir", "soru çözme",
+            "mecaz anlam mıdır", "gerçek anlam mıdır", "kelimesinin anlamı", "kelimesi mecaz",
+            "http://", "https://", "www.",
+        )):
+            return False
+        if "…" in sentence or "..." in sentence:
+            return False
+        if re.match(r"^(?:isim|fiil|sıfat|zarf|edat|ünlem|zamir)\s*[:\-]", lower):
+            return False
+        if re.match(rf"^\s*{re.escape(word.casefold())}\s+(?:isim|fiil|sıfat|zarf|edat|ünlem|zamir)\s*[:\-]", lower):
+            return False
+        if any(marker in lower for marker in (
+            "kelimesini içeren", "çok sayıda örnek cümle",
+            "nasıl kullanılır", "yorumlarını inceleyin",
+            "günlük ped", "bio-care", "molped", "kotex",
+            "adet fiyatı", "fiyatını", "ürün", "ped ",
+            "şampuan", "krem ", "kampanya", "satın al",
+        )):
+            return False
+        words = re.findall(r"[\wçğıöşüÇĞİÖŞÜ]+", sentence, flags=re.UNICODE)
+        if len(words) < 3:
+            return False
+        if sentence.count("|") >= 2 or sentence.count("/") >= 3:
+            return False
+        return not (sentence.count(",") >= 5 and len(words) < 14)
