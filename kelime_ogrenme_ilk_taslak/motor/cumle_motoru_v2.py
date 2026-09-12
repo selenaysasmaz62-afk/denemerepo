@@ -213,8 +213,10 @@ class CumleMotoruV2:
         seen = set()
 
         queries = (
-            f'site:context.reverso.net/translation/turkish-english "{word}"',
-            f'site:context.reverso.net "Türkçe" "{word}" "Örnekler"',
+            f'site:context.reverso.net/translation/turkish-english "{word}" '
+            f'-Muharrem -CHP -haber -biyografi -milletvekili -parti',
+            f'site:context.reverso.net/translation/turkish-english "{word}" '
+            f'"örnek" -Muharrem -CHP -haber -biyografi',
         )
 
         source_url = (
@@ -421,6 +423,52 @@ class CumleMotoruV2:
                 web_lower,
             ):
                 return
+        if source == "reverso_example":
+            # Reverso/Bing sonuçlarında kelime bazen kişi adı olarak gelir
+            # (örn. "Muharrem İnce"). Hedef kelime cümle içinde özel isim
+            # biçiminde kullanılıyorsa bunu gerçek kelime kullanımı sayma.
+            target = word.casefold().replace("\u0307", "")
+            matches = list(re.finditer(
+                rf"(?<![\wçğıöşüÇĞİÖŞÜ]){re.escape(word)}(?![\wçğıöşüÇĞİÖŞÜ])",
+                sentence,
+                flags=re.IGNORECASE,
+            ))
+            if not matches:
+                return
+
+            for match in matches:
+                matched = match.group(0).casefold().replace("\u0307", "")
+                if match.start() > 0 and matched != target:
+                    return
+
+            # Hedef kelimeden hemen önceki kelime özel isim gibi başlıyorsa
+            # ve cümle bununla başlamıyorsa kişi adı olma ihtimalini ele.
+            for match in matches:
+                prefix = sentence[:match.start()].strip()
+                if not prefix:
+                    continue
+                previous = prefix.split()[-1].strip(
+                    ".,;:!?()[]{}\"'“”‘’"
+                )
+                common_starters = {
+                    "bu", "şu", "o", "çok", "en", "bir", "daha",
+                    "ne", "pek", "son", "ince", "fazla", "oldukça",
+                }
+                if (
+                    previous
+                    and previous[:1].isupper()
+                    and previous.casefold() not in common_starters
+                ):
+                    return
+
+            reverso_lower = sentence.casefold().replace("\u0307", "")
+            if any(marker in reverso_lower for marker in (
+                "muharrem", "chp", "biyografi", "haberleri",
+                "son dakika", "milletvekili", "genel başkan",
+                "istifa etti", "partiye geçti",
+            )):
+                return
+
         sentence = re.sub(r"^(?:\d+\s*[.)]|[-–—•·*])\s*", "", sentence).strip()
         sentence = re.sub(r"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği|örnek)\s*[:\-–—]?\s*", "", sentence, flags=re.IGNORECASE).strip()
         if not self._is_valid_candidate(word, sentence):
