@@ -57,6 +57,12 @@ class KelimeArastirmaMotoru:
                     pass
             return None
 
+    async def _fallback_search(self, query):
+        try:
+            return await asyncio.wait_for(self.web.search(query), timeout=7)
+        except Exception:
+            return None
+
     async def research(self, word):
         results = []
         seen = set()
@@ -73,11 +79,26 @@ class KelimeArastirmaMotoru:
                 if len(results) >= 16:
                     break
 
-        # Arama motoru belirli sorguları boş döndürürse daha genel tek bir yedek sorgu dene.
+        # Bing boş dönerse mevcut yedekli araştırıcıyı kullan; böylece kaynaklar tamamen kaybolmaz.
         if not results:
-            fallback = await self._bing_search(f'"{word}" Türkçe')
-            if isinstance(fallback, dict):
-                self._append_results(results, seen, fallback.get("results", []))
+            fallback_queries = (
+                f'"{word}" Türkçe anlamı',
+                f'"{word}" ne demek Türkçe',
+            )
+            fallbacks = await asyncio.gather(
+                *(self._fallback_search(query) for query in fallback_queries),
+                return_exceptions=True,
+            )
+            for data in fallbacks:
+                if isinstance(data, dict):
+                    self._append_results(results, seen, data.get("results", []))
+                    if len(results) >= 16:
+                        break
+
+        # Son güvence: sözlük API'sinden anlamları kaynak olarak ekle.
+        if not results:
+            dictionary = await self._dictionary_results(word)
+            self._append_results(results, seen, dictionary)
 
         ranked = sorted(results, key=lambda item: self._result_score(word, item), reverse=True)
         senses = self._build_senses(word, ranked)
