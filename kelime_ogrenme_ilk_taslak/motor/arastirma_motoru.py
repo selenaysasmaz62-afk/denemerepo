@@ -18,6 +18,26 @@ class KelimeArastirmaMotoru:
         "film", "albüm", "şarkı", "oyun", "dizi", "bölüm",
     )
 
+    _USAGE_JUNK = (
+        "bir cümlede ",
+        "ifadesini nasıl kullanacağınızı",
+        "kelimesini içeren çok sayıda",
+        "kelimesi ile ilgili",
+        "kelimesinin ile ilgili",
+        "örnek cümleler vereyim",
+        "örnek cümleleri",
+        "gerçek ve mecaz anlam",
+        "aşağıda her iki anlamı",
+        "kullanım bağlamına göre",
+        "gövde anlamlar",
+        "incehesap.com",
+        "muharrem ince",
+        "resmi web sitesidir",
+        "erişim tarihi",
+        "kendinize meydan okuyun",
+        "daha hafif bir modelden",
+    )
+
     def __init__(self):
         # Mobil/Termux ortamında yavaş veya erişilemeyen bir sağlayıcının
         # tüm araştırma zincirini uzun süre bloke etmesini önler.
@@ -169,14 +189,14 @@ class KelimeArastirmaMotoru:
     def _clean_text(value):
         return " ".join(html.unescape(str(value or "")).split()).strip()
 
-    @staticmethod
-    def _append_results(results, seen, items):
+    @classmethod
+    def _append_results(cls, results, seen, items):
         for result in items:
             if not isinstance(result, dict):
                 continue
             clean = {
-                "title": KelimeArastirmaMotoru._clean_text(result.get("title", "")),
-                "snippet": KelimeArastirmaMotoru._clean_text(result.get("snippet", "")),
+                "title": cls._clean_text(result.get("title", "")),
+                "snippet": cls._clean_text(result.get("snippet", "")),
                 "url": result.get("url", "") or "",
             }
             key = clean["url"] or f'{clean["title"]}|{clean["snippet"]}'
@@ -184,16 +204,36 @@ class KelimeArastirmaMotoru:
                 seen.add(key)
                 results.append(clean)
 
-    @staticmethod
-    def _append_contexts(contexts, seen, items):
+    @classmethod
+    def _is_usage_context_valid(cls, word, text):
+        normalized = cls._clean_text(text)
+        lower = normalized.casefold().replace("\u0307", "")
+        if not normalized or len(normalized) < 12:
+            return False
+        if word.casefold() not in lower:
+            return False
+        if any(marker in lower for marker in cls._USAGE_JUNK):
+            return False
+        if "http://" in lower or "https://" in lower or "www." in lower:
+            return False
+        if normalized.count("…") or "..." in normalized:
+            return False
+        if normalized.endswith(":"):
+            return False
+        return True
+
+    @classmethod
+    def _append_contexts(cls, contexts, seen, items):
         for result in items:
             if isinstance(result, str):
-                text = KelimeArastirmaMotoru._clean_text(result)
+                text = cls._clean_text(result)
             elif isinstance(result, dict):
-                snippet = KelimeArastirmaMotoru._clean_text(result.get("snippet", ""))
-                title = KelimeArastirmaMotoru._clean_text(result.get("title", ""))
+                snippet = cls._clean_text(result.get("snippet", ""))
+                title = cls._clean_text(result.get("title", ""))
                 text = snippet or title
             else:
+                continue
+            if not cls._is_usage_context_valid("ince", text):
                 continue
             key = " ".join(text.casefold().split())
             if text and key not in seen:
