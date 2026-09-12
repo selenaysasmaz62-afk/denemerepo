@@ -69,9 +69,17 @@ class KelimeArastirmaMotoru:
             f'"{word}" cümle içinde kullanım',
             f'"{word}" günlük kullanım örnekleri',
         )
-        for query in queries:
-            data = await self.web.search(query)
-            self._append_contexts(contexts, seen, data.get("results", []))
+
+        # Üç kullanım sorgusunu ardışık çalıştırmak, yavaş bir sağlayıcının
+        # tüm zinciri gereksiz yere bekletmesine neden oluyordu. Sorguları
+        # birlikte başlatıp sonuçları geldikçe aynı filtreyle topluyoruz.
+        responses = await asyncio.gather(
+            *(self.web.search(query) for query in queries),
+            return_exceptions=True,
+        )
+        for data in responses:
+            if isinstance(data, dict):
+                self._append_contexts(contexts, seen, data.get("results", []))
             if len(contexts) >= 12:
                 break
 
