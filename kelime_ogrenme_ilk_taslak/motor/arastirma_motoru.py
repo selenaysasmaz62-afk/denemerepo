@@ -61,8 +61,10 @@ class KelimeArastirmaMotoru:
         seen = set()
         query = f'"{word}" "örnek cümle"'
 
+        # Usage araştırmasında to_thread kullanılmıyor. Böylece asyncio.run()
+        # kapanırken iptal edilemeyen arka plan thread'leri süreci kilitlemiyor.
         try:
-            data = await asyncio.wait_for(self.web.search(query), timeout=12)
+            data = self.web._search_sync(query)
         except Exception:
             data = None
 
@@ -85,7 +87,7 @@ class KelimeArastirmaMotoru:
         text = f"{title} {snippet}"
         score = 0
         if word.casefold() in title: score += 3
-        for marker in ("tdk", "sözlük", "anlamı", "ne demek", "tanım", "dictionary"): 
+        for marker in ("tdk", "sözlük", "anlamı", "ne demek", "tanım", "dictionary"):
             if marker in text: score += 4
         if "wikipedia" in title: score += 1
         if any(marker in title for marker in cls._JUNK_TITLE): score -= 10
