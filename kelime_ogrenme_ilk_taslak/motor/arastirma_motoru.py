@@ -64,14 +64,23 @@ class KelimeArastirmaMotoru:
             f'"{word}" cümle içinde kullanım',
             f'"{word}" günlük kullanım örnekleri',
         )
-        responses = await asyncio.gather(*(self.web.search(query) for query in queries), return_exceptions=True)
+
+        async def safe_search(query):
+            try:
+                return await asyncio.wait_for(self.web.search(query), timeout=8)
+            except Exception:
+                return None
+
+        responses = await asyncio.gather(*(safe_search(query) for query in queries))
         for data in responses:
             if isinstance(data, dict):
                 self._append_contexts(contexts, seen, data.get("results", []), word)
             if len(contexts) >= 12:
                 break
-        if len(contexts) < 4:
+
+        if not contexts:
             self._append_contexts(contexts, seen, research.get("sources", []) if isinstance(research, dict) else [], word)
+
         lower = word.casefold().replace("\u0307", "")
         for context in contexts:
             if lower in context.casefold().replace("\u0307", ""):
