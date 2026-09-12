@@ -25,6 +25,19 @@ class CumleMotoruV2:
                 if len(candidates) >= 15:
                     return candidates[:15]
 
+        # Öncelik: Tatoeba'dan doğrudan gerçek Türkçe cümleler.
+        for item in self._tatoeba_sentences(word):
+            self._add_sentence(
+                word,
+                item.get("sentence", ""),
+                candidates,
+                seen,
+                "tatoeba",
+                item.get("url", ""),
+            )
+            if len(candidates) >= 15:
+                return candidates[:15]
+
         for sentence, url in await self._tatoeba_sentences(word):
             self._add_sentence(word, sentence, candidates, seen, "tatoeba", url)
             if len(candidates) >= 15:
