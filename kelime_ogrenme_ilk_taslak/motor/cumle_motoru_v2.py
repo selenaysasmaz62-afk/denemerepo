@@ -223,6 +223,18 @@ class CumleMotoruV2:
         if not text:
             return
 
+        # Önce tırnak içindeki gerçek örnekleri al. SEO açıklamalarındaki
+        # tanım metnini değil, doğrudan verilen kullanım cümlesini tercih eder.
+        quoted = re.findall(
+            r"[\"“”‘’']([^\"“”‘’']{12,220})[\"“”‘’']",
+            text,
+            flags=re.UNICODE,
+        )
+        for item in quoted:
+            self._add_sentence(word, item, candidates, seen, source, url)
+            if len(candidates) >= 15:
+                return
+
         # "2 örnek cümle: 1) ... 2) ..." formatını ayrı cümlelere böl.
         numbered = re.findall(
             r"(?:^|\s)(?:\d+\s*[.)])\s*(.+?)(?=\s+\d+\s*[.)]\s*|$)",
@@ -234,17 +246,31 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return
 
+        # Yıldız, tire ve madde imiyle verilen örnekleri ayrı ayrı çıkar.
+        bullets = re.findall(
+            r"(?:^|\s)(?:[*•·]|[-–—])\s*(.+?)(?=\s+(?:[*•·]|[-–—])\s*|$)",
+            text,
+            flags=re.UNICODE,
+        )
+        for item in bullets:
+            self._add_sentence(word, item, candidates, seen, source, url)
+            if len(candidates) >= 15:
+                return
+
         example_matches = re.findall(
             r"(?:örnek cümle|örnek kullanım|kullanım örneği|example|örnek)\s*[:\-–—]\s*(.+)",
             text,
             flags=re.IGNORECASE,
         )
-        if example_matches:
-            for example in example_matches:
-                self._extract_from_text(word, example, candidates, seen, source, url)
-                if len(candidates) >= 15:
-                    return
+        for example in example_matches:
+            # Etiket kısmını temizleyip kalan metni tekrar parçala.
+            if example.strip() == text.strip():
+                continue
+            self._extract_from_text(word, example, candidates, seen, source, url)
+            if len(candidates) >= 15:
+                return
 
+        # Son olarak normal noktalama ile ayrılmış cümleleri değerlendir.
         parts = re.split(r"(?<=[.!?])\s+|\s*[•·]\s*|\s*\*\s*", text)
         for part in parts:
             self._add_sentence(word, part, candidates, seen, source, url)
