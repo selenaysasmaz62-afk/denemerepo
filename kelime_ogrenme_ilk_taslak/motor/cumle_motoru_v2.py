@@ -27,13 +27,23 @@ class CumleMotoruV2:
 
         # Öncelik: Tatoeba'dan doğrudan gerçek Türkçe cümleler.
         for item in await self._tatoeba_sentences(word):
+            if isinstance(item, dict):
+                text = item.get("sentence", "")
+                url = item.get("url", "")
+            elif isinstance(item, (tuple, list)):
+                text = item[0] if item else ""
+                url = item[1] if len(item) > 1 else ""
+            else:
+                text = str(item)
+                url = ""
+
             self._add_sentence(
                 word,
-                item.get("sentence", ""),
+                text,
                 candidates,
                 seen,
                 "tatoeba",
-                item.get("url", ""),
+                url,
             )
             if len(candidates) >= 15:
                 return candidates[:15]
