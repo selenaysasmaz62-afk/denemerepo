@@ -331,7 +331,7 @@ class CumleMotoruV2:
         # Web arama sonuçlarında açıklama/parça cümleleri gerçek kullanım
         # cümlesi değildir. Bunları daha validation'a gelmeden ele.
         if source == "web_sentence_research":
-            web_lower = sentence.casefold().replace("\\u0307", "")
+            web_lower = sentence.casefold().replace("\u0307", "")
             if any(marker in web_lower for marker in (
                 "örnek cümle", "örnek cümle:", "örnek kullanım",
                 "anlamını", "anlamıdır", "anlamı", "sıfat olarak",
@@ -341,14 +341,14 @@ class CumleMotoruV2:
             )):
                 return
             if re.match(
-                r"^\\s*(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\\s+\\d{4}\\s*[·•|:-]",
+                r"^\s*(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}\s*[·•|:-]",
                 sentence,
                 flags=re.IGNORECASE,
             ):
                 return
             # Yarım bırakılmış Bing snippetlerini kabul etme.
             if re.search(
-                r"\\b(?:kimse|ki|ise|olan|olarak|için|ve|veya|ile|bir|bu|şu|o)\\s*[.!?]?$",
+                r"\b(?:kimse|ki|ise|olan|olarak|için|ve|veya|ile|bir|bu|şu|o)\s*[.!?]?$",
                 web_lower,
             ):
                 return
