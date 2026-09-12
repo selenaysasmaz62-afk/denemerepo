@@ -99,7 +99,7 @@ class KelimeArastirmaMotoru:
         )
         for data in responses:
             if isinstance(data, dict):
-                self._append_contexts(contexts, seen, data.get("results", []))
+                self._append_contexts(contexts, seen, data.get("results", []), word)
             if len(contexts) >= 12:
                 break
 
@@ -108,6 +108,7 @@ class KelimeArastirmaMotoru:
                 contexts,
                 seen,
                 research.get("sources", []) if isinstance(research, dict) else [],
+                word,
             )
 
         lower = word.casefold()
@@ -210,7 +211,7 @@ class KelimeArastirmaMotoru:
         lower = normalized.casefold().replace("\u0307", "")
         if not normalized or len(normalized) < 12:
             return False
-        if word.casefold() not in lower:
+        if word.casefold().replace("\u0307", "") not in lower:
             return False
         if any(marker in lower for marker in cls._USAGE_JUNK):
             return False
@@ -223,7 +224,7 @@ class KelimeArastirmaMotoru:
         return True
 
     @classmethod
-    def _append_contexts(cls, contexts, seen, items):
+    def _append_contexts(cls, contexts, seen, items, word):
         for result in items:
             if isinstance(result, str):
                 text = cls._clean_text(result)
@@ -233,7 +234,7 @@ class KelimeArastirmaMotoru:
                 text = snippet or title
             else:
                 continue
-            if not cls._is_usage_context_valid("ince", text):
+            if not cls._is_usage_context_valid(word, text):
                 continue
             key = " ".join(text.casefold().split())
             if text and key not in seen:
