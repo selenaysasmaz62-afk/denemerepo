@@ -302,8 +302,10 @@ class CumleMotoruV2:
             if len(candidates) < 15 and self._contains_target_word(word, text):
                 words = text.split()
                 target_index = next(
-                    (i for i, value in enumerate(words)
-                     if self._contains_target_word(word, value.strip(".,!?;:()[]"'“”‘’"))),
+                    (
+                        i for i, value in enumerate(words)
+                        if self._contains_target_word(word, value)
+                    ),
                     None,
                 )
                 if target_index is not None:
