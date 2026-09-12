@@ -22,12 +22,19 @@ class KelimeOgrenmeMotoru:
 
     async def run(self):
         self.db.initialize()
-        await self.queue.enqueue_input_words()
-        while True:
-            item = self.queue.next_word()
-            if not item:
-                break
-            await self.process_word(item["id"], item["word"])
+        try:
+            await self.queue.enqueue_input_words()
+            while True:
+                item = self.queue.next_word()
+                if not item:
+                    break
+                try:
+                    await self.process_word(item["id"], item["word"])
+                except Exception:
+                    await self.state.fail(item["id"])
+                    raise
+        finally:
+            self.db.close()
 
     @staticmethod
     def _normalize_usage(word, usage):
@@ -88,4 +95,4 @@ class KelimeOgrenmeMotoru:
         await self.results.save_test_result(
             learning_id, word, research, usage, sentences, responses, validation
         )
-        await self.state.set_step(learning_id, "completed")
+        await self.state.complete(learning_id)
