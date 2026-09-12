@@ -47,20 +47,17 @@ class KelimeArastirmaMotoru:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=6)
             if process.returncode != 0 or not stdout:
                 return None
-            results = _BingSearchParser().parse(stdout.decode("utf-8", errors="replace"), url)
-            return {"query": query, "results": results[:8], "error": None, "provider": "https://www.bing.com/search"}
+            raw = stdout.decode("utf-8", errors="replace")
+            parser = _BingSearchParser()
+            parser.feed(raw)
+            parser.close()
+            return {"query": query, "results": parser.results[:8], "error": None, "provider": "https://www.bing.com/search"}
         except Exception:
             if process is not None:
                 try:
                     process.kill()
                 except Exception:
                     pass
-            return None
-
-    async def _fallback_search(self, query):
-        try:
-            return await asyncio.wait_for(self.web.search(query), timeout=7)
-        except Exception:
             return None
 
     async def research(self, word):
@@ -79,26 +76,10 @@ class KelimeArastirmaMotoru:
                 if len(results) >= 16:
                     break
 
-        # Bing boş dönerse mevcut yedekli araştırıcıyı kullan; böylece kaynaklar tamamen kaybolmaz.
         if not results:
-            fallback_queries = (
-                f'"{word}" Türkçe anlamı',
-                f'"{word}" ne demek Türkçe',
-            )
-            fallbacks = await asyncio.gather(
-                *(self._fallback_search(query) for query in fallback_queries),
-                return_exceptions=True,
-            )
-            for data in fallbacks:
-                if isinstance(data, dict):
-                    self._append_results(results, seen, data.get("results", []))
-                    if len(results) >= 16:
-                        break
-
-        # Son güvence: sözlük API'sinden anlamları kaynak olarak ekle.
-        if not results:
-            dictionary = await self._dictionary_results(word)
-            self._append_results(results, seen, dictionary)
+            fallback = await self._bing_search(f'"{word}" Türkçe')
+            if isinstance(fallback, dict):
+                self._append_results(results, seen, fallback.get("results", []))
 
         ranked = sorted(results, key=lambda item: self._result_score(word, item), reverse=True)
         senses = self._build_senses(word, ranked)
@@ -112,15 +93,11 @@ class KelimeArastirmaMotoru:
         patterns = []
         seen = set()
         query = f'"{word}" "örnek cümle"'
-
         data = await self._usage_web_search(query)
-
         if isinstance(data, dict):
             self._append_contexts(contexts, seen, data.get("results", []), word)
-
         if not contexts:
             self._append_contexts(contexts, seen, research.get("sources", []) if isinstance(research, dict) else [], word)
-
         lower = word.casefold().replace("\u0307", "")
         for context in contexts:
             if lower in context.casefold().replace("\u0307", ""):
