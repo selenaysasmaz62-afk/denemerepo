@@ -378,6 +378,16 @@ class CumleMotoruV2:
             return False
         if re.match(r"^(?:isim|fiil|sıfat|zarf|edat|ünlem|zamir)\s*[:\-]", lower):
             return False
+        if re.match(rf"^\s*{re.escape(word.casefold())}\s+(?:isim|fiil|sıfat|zarf|edat|ünlem|zamir)\s*[:\-]", lower):
+            return False
+        if any(marker in lower for marker in (
+            "kelimesini içeren", "çok sayıda örnek cümle",
+            "nasıl kullanılır", "yorumlarını inceleyin",
+            "günlük ped", "bio-care", "molped", "kotex",
+            "adet fiyatı", "fiyatını", "ürün", "ped ",
+            "şampuan", "krem ", "kampanya", "satın al",
+        )):
+            return False
         words = re.findall(r"[\wçğıöşüÇĞİÖŞÜ]+", sentence, flags=re.UNICODE)
         if len(words) < 3:
             return False
