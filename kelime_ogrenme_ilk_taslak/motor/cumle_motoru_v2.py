@@ -335,33 +335,78 @@ class CumleMotoruV2:
     def _extract_web_search_examples(self, word, text, candidates, seen, source, url=""):
         if not text:
             return
+
         text = self._clean_text(text)
         if not text:
             return
 
-        # Eğitim/sözlük sonuçlarında "Zarf:", "Sıfat:", "Örnek:" gibi
-        # etiketleri at; etiketten sonraki gerçek cümleyi değerlendirmeye bırak.
-        text = re.sub(
-            r"^\s*(?:zarf|sıfat|isim|fiil|edat|zamir|ünlem|örnek cümle|örnek kullanım|kullanım örneği|örnek|cümle)\s*[:\-–—]\s*",
-            "",
-            text,
+        # Önce açıkça belirtilmiş örnek cümleyi yakala.
+        label_pattern = re.compile(
+            r"(?:cümle örneği|örnek cümle|örnek kullanım|kullanım örneği|"
+            r"örnek)\s*[:\-–—]\s*[\"“‘]?(.*?)(?:[\"”’]|(?<=[.!?]))(?=\s|$)",
             flags=re.IGNORECASE,
         )
 
-        # Snippet içindeki tamamlanmış cümleleri tek tek dene.
+        for match in label_pattern.finditer(text):
+            candidate = self._clean_text(match.group(1))
+            if self._contains_target_word(word, candidate):
+                self._add_sentence(
+                    word, candidate, candidates, seen,
+                    source, url
+                )
+                if len(candidates) >= 15:
+                    return
+
+        # Türkçe kıvrımlı tırnakları doğru şekilde eşleştir.
+        quoted_patterns = (
+            r"“([^”]{12,220})”",
+            r"‘([^’]{12,220})’",
+            r'"([^"]{12,220})"',
+        )
+
+        for pattern in quoted_patterns:
+            for item in re.findall(pattern, text, flags=re.UNICODE):
+                item = self._clean_text(item)
+                if not self._contains_target_word(word, item):
+                    continue
+
+                self._add_sentence(
+                    word, item, candidates, seen,
+                    source, url
+                )
+                if len(candidates) >= 15:
+                    return
+
+        # Son olarak tamamlanmış cümleleri tek tek değerlendir.
         parts = re.split(r"(?<=[.!?])\s+", text)
+
         for part in parts:
             part = self._clean_text(part)
+
             if not part or not self._contains_target_word(word, part):
                 continue
-            self._add_sentence(word, part, candidates, seen, source, url)
-            if len(candidates) >= 15:
-                return
 
-        # Tırnak içindeki örnek cümleleri ayrıca dene.
-        quoted = re.findall(r"[\"“”‘’']([^\"“”‘’']{12,220})[\"“”‘’']", text)
-        for item in quoted:
-            self._add_sentence(word, item, candidates, seen, source, url)
+            # Meta/sözlük açıklaması olan uzun parçayı doğrudan alma.
+            lower = part.casefold()
+
+            if any(marker in lower for marker in (
+                "örnek cümle",
+                "örnek kullanım",
+                "kullanım örneği",
+                "anlamı",
+                "anlamında",
+                "sözlük sayfası",
+                "ne demek",
+                "kelimesinin",
+                "kelimesi",
+            )):
+                continue
+
+            self._add_sentence(
+                word, part, candidates, seen,
+                source, url
+            )
+
             if len(candidates) >= 15:
                 return
 
