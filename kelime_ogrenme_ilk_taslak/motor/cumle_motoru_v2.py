@@ -288,8 +288,7 @@ class CumleMotoruV2:
                 return
 
         if source == "web_sentence_research":
-            # Bing snippetini yalnızca noktalama ile ayrılmış gerçek
-            # cümleler halinde değerlendir; tüm snippet'i cümle kabul etme.
+            # Önce noktalama ile ayrılmış gerçek cümleleri dene.
             parts = re.split(r"(?<=[.!?])\s+", text)
             for part in parts:
                 part = part.strip()
@@ -297,6 +296,24 @@ class CumleMotoruV2:
                     self._add_sentence(word, part, candidates, seen, source, url)
                     if len(candidates) >= 15:
                         return
+
+            # Bing bazı gerçek cümleleri noktalamasız snippet olarak döndürür.
+            # Bu durumda hedef kelimenin çevresindeki kısa cümle parçasını dene.
+            if len(candidates) < 15 and self._contains_target_word(word, text):
+                words = text.split()
+                target_index = next(
+                    (i for i, value in enumerate(words)
+                     if self._contains_target_word(word, value.strip(".,!?;:()[]"'“”‘’"))),
+                    None,
+                )
+                if target_index is not None:
+                    start = max(0, target_index - 7)
+                    end = min(len(words), target_index + 8)
+                    fragment = " ".join(words[start:end]).strip()
+                    fragment = re.sub(r"^[^A-Za-zÇĞİÖŞÜçğıöşü]+", "", fragment)
+                    fragment = re.sub(r"[^A-Za-zÇĞİÖŞÜçğıöşü0-9.,!?;:()'’\- ]+$", "", fragment)
+                    self._add_sentence(word, fragment, candidates, seen, source, url)
+
             return
 
         parts = re.split(r"(?<=[.!?])\s+|\s*[•·]\s*|\s*\*\s*", text)
