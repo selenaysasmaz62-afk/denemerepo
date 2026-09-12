@@ -327,6 +327,31 @@ class CumleMotoruV2:
     def _add_sentence(self, word, sentence, candidates, seen, source, url=""):
         sentence = self._clean_text(sentence)
         sentence = sentence.strip(" \t\r\n-–—•·*\"'“”‘’")
+
+        # Web arama sonuçlarında açıklama/parça cümleleri gerçek kullanım
+        # cümlesi değildir. Bunları daha validation'a gelmeden ele.
+        if source == "web_sentence_research":
+            web_lower = sentence.casefold().replace("\\u0307", "")
+            if any(marker in web_lower for marker in (
+                "örnek cümle", "örnek cümle:", "örnek kullanım",
+                "anlamını", "anlamıdır", "anlamı", "sıfat olarak",
+                "isim olarak", "fiil olarak", "kelimesini içeren",
+                "kelimesinin", "nasıl kullanılır", "cümle:",
+                "cümleler", "sözlük", "türkçenin en", "türkçede",
+            )):
+                return
+            if re.match(
+                r"^\\s*(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\\s+\\d{4}\\s*[·•|:-]",
+                sentence,
+                flags=re.IGNORECASE,
+            ):
+                return
+            # Yarım bırakılmış Bing snippetlerini kabul etme.
+            if re.search(
+                r"\\b(?:kimse|ki|ise|olan|olarak|için|ve|veya|ile|bir|bu|şu|o)\\s*[.!?]?$",
+                web_lower,
+            ):
+                return
         sentence = re.sub(r"^(?:\d+\s*[.)]|[-–—•·*])\s*", "", sentence).strip()
         sentence = re.sub(r"^(?:örnek cümle|örnek kullanım|cümle içinde|kullanım örneği|örnek)\s*[:\-–—]?\s*", "", sentence, flags=re.IGNORECASE).strip()
         if not self._is_valid_candidate(word, sentence):
