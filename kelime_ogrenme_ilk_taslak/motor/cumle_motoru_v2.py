@@ -24,9 +24,7 @@ class _ReversoHTMLParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         classes = set((attrs.get("class", "") or "").casefold().split())
-
         self.depth += 1
-
         if tag.lower() == "span" and "text" in classes:
             self.capture_depth = self.depth
             self.buffer = []
@@ -42,7 +40,6 @@ class _ReversoHTMLParser(HTMLParser):
                 self.values.append(text)
             self.capture_depth = None
             self.buffer = []
-
         self.depth = max(0, self.depth - 1)
 
 
@@ -55,13 +52,7 @@ class CumleMotoruV2:
     async def research(self, word, research, usage):
         candidates, seen = [], set()
 
-        if isinstance(usage, dict):
-            for sentence in usage.get("contexts", []) or []:
-                self._add_sentence(word, sentence, candidates, seen, "usage_research", "")
-                if len(candidates) >= 15:
-                    return candidates[:15]
-
-        # Öncelik: Tatoeba'dan doğrudan gerçek Türkçe cümleler.
+        # Tatoeba'da gerçekten cümle varsa kullan; yoksa burada oyalanma.
         for item in await self._tatoeba_sentences(word):
             if isinstance(item, dict):
                 text = item.get("sentence", "")
@@ -72,18 +63,11 @@ class CumleMotoruV2:
             else:
                 text = str(item)
                 url = ""
-
-            self._add_sentence(
-                word,
-                text,
-                candidates,
-                seen,
-                "tatoeba",
-                url,
-            )
+            self._add_sentence(word, text, candidates, seen, "tatoeba", url)
             if len(candidates) >= 15:
                 return candidates[:15]
 
+        # Sözlük kaynakları varsa değerlendir.
         for sentence, url in await self._dictionary_examples(word):
             self._add_sentence(word, sentence, candidates, seen, "dictionary_example", url)
             if len(candidates) >= 15:
@@ -100,6 +84,34 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return candidates[:15]
 
+        # Asıl fallback: Bing arama sonuçlarında görünen gerçek cümle parçalarını
+        # sıkı filtreyle ayıkla. Tanım/meta/snippet parçalarını alma.
+        for query in (
+            f'"{word}" "örnek cümle"',
+            f'"{word}" "örnek kullanım"',
+            f'"{word}" "cümle içinde"',
+            f'"{word}" "kullanım örneği"',
+            f'"{word}" günlük kullanım',
+        ):
+            data = await self.web.search(query)
+            if not isinstance(data, dict):
+                continue
+            for result in data.get("results", []) or []:
+                if not isinstance(result, dict):
+                    continue
+                snippet = result.get("snippet", "") or ""
+                url = result.get("url", "") or ""
+                if not snippet:
+                    continue
+                self._extract_web_search_examples(
+                    word, snippet, candidates, seen,
+                    "web_sentence_research", url,
+                )
+                if len(candidates) >= 15:
+                    return candidates[:15]
+
+        # En son araştırma kaynaklarının snippet'lerinden açıkça işaretlenmiş
+        # örnekleri dene. Burada da genel snippet'i doğrudan cümle kabul etme.
         if len(candidates) < 3 and isinstance(research, dict):
             for result in research.get("sources", []) or []:
                 if not isinstance(result, dict):
@@ -131,12 +143,7 @@ class CumleMotoruV2:
             parser.feed(stdout.decode("utf-8", errors="replace"))
             parser.close()
             results = parser.results[:8]
-            return {
-                "query": query,
-                "results": results,
-                "error": None,
-                "provider": "https://www.bing.com/search",
-            }
+            return {"query": query, "results": results, "error": None, "provider": "https://www.bing.com/search"}
         except Exception:
             if process is not None:
                 try:
@@ -171,137 +178,73 @@ class CumleMotoruV2:
             return ""
 
     async def _tatoeba_sentences(self, word):
-        # Tatoeba API v1:
-        # - Türkçe cümle
-        # - hedef kelimenin tam eşleşmesi
-        # - en az 3 kelime
-        # - yetim/onaysız cümle yok
-        urls = [
-            (
-                "https://api.tatoeba.org/v1/sentences?"
-                f"lang=tur&q={quote_plus('=' + word)}"
-                "&word_count=3-&is_orphan=no&is_unapproved=no"
-                "&sort=relevance&limit=50",
-                "https://api.tatoeba.org/",
-            ),
-        ]
-
-        for url, source_url in urls:
-            try:
-                raw = await self._fetch_url_text(url)
-                payload = json.loads(raw)
-
-                items = payload.get("data", []) if isinstance(payload, dict) else payload
-                if not isinstance(items, list):
+        # Tatoeba API v1: Türkçe, tam eşleşme, en az 3 kelime,
+        # yetim/onaysız cümle yok. Sonuç yoksa boş dön ve diğer kaynağa geç.
+        url = (
+            "https://api.tatoeba.org/v1/sentences?"
+            f"lang=tur&q={quote_plus('=' + word)}"
+            "&word_count=3-&is_orphan=no&is_unapproved=no"
+            "&sort=relevance&limit=50"
+        )
+        try:
+            raw = await self._fetch_url_text(url)
+            payload = json.loads(raw)
+            items = payload.get("data", []) if isinstance(payload, dict) else payload
+            if not isinstance(items, list):
+                return []
+            values, seen = [], set()
+            for item in items:
+                if not isinstance(item, dict):
                     continue
-
-                values = []
-                seen = set()
-
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-
-                    text = self._clean_text(
-                        item.get("text")
-                        or item.get("sentence")
-                        or ""
-                    )
-
-                    if not text:
-                        continue
-
-                    if not self._contains_target_word(word, text):
-                        continue
-
-                    if len(re.findall(r"\\S+", text)) < 3:
-                        continue
-
-                    key = " ".join(text.casefold().split())
-                    if key in seen:
-                        continue
-
-                    seen.add(key)
-                    values.append((text, source_url))
-
-                    if len(values) >= 15:
-                        break
-
-                if values:
-                    return values
-
-            except Exception:
-                continue
-
-        return []
+                text = self._clean_text(item.get("text") or item.get("sentence") or "")
+                if not text or not self._contains_target_word(word, text):
+                    continue
+                if len(re.findall(r"\S+", text)) < 3:
+                    continue
+                key = " ".join(text.casefold().split())
+                if key in seen:
+                    continue
+                seen.add(key)
+                sentence_id = item.get("id")
+                source_url = (
+                    f"https://tatoeba.org/en/sentences/show/{sentence_id}"
+                    if sentence_id else "https://api.tatoeba.org/"
+                )
+                values.append((text, source_url))
+                if len(values) >= 15:
+                    break
+            return values
+        except Exception:
+            return []
 
     async def _reverso_examples(self, word):
-        values = []
-        seen = set()
-
-        url = (
-            "https://dictionary.reverso.net/turkish-english/"
-            + quote_plus(word)
-        )
-
-        raw = await self._fetch_url_text(
-            url,
-            accept="text/html,application/xhtml+xml",
-        )
+        values, seen = [], set()
+        url = "https://dictionary.reverso.net/turkish-english/" + quote_plus(word)
+        raw = await self._fetch_url_text(url, accept="text/html,application/xhtml+xml")
         if not raw:
             return values
-
-        raw = re.sub(
-            r"<script\\b[^>]*>.*?</script>",
-            " ",
-            raw,
-            flags=re.I | re.S,
-        )
-        raw = re.sub(
-            r"<style\\b[^>]*>.*?</style>",
-            " ",
-            raw,
-            flags=re.I | re.S,
-        )
+        raw = re.sub(r"<script\b[^>]*>.*?</script>", " ", raw, flags=re.I | re.S)
+        raw = re.sub(r"<style\b[^>]*>.*?</style>", " ", raw, flags=re.I | re.S)
         raw = re.sub(r"<[^>]+>", " ", raw)
         raw = self._clean_text(raw)
-
-        # Reverso sözlük sayfasındaki tam Türkçe örnekleri ayıkla.
         marker = "Examples and translations in context"
         if marker.casefold() in raw.casefold():
-            raw = raw[
-                raw.casefold().find(marker.casefold()) + len(marker):
-            ]
-
-        parts = re.split(r"(?<=[.!?])\\s+", raw)
-
+            raw = raw[raw.casefold().find(marker.casefold()) + len(marker):]
+        parts = re.split(r"(?<=[.!?])\s+", raw)
         for part in parts:
             part = self._clean_text(part)
-
             if not part or not self._contains_target_word(word, part):
                 continue
-
             extracted = []
-            self._add_sentence(
-                word,
-                part,
-                extracted,
-                set(),
-                "reverso_example",
-                url,
-            )
-
+            self._add_sentence(word, part, extracted, set(), "reverso_example", url)
             for item in extracted:
                 sentence = item.get("sentence", "")
                 key = " ".join(sentence.casefold().split())
-
                 if key and key not in seen:
                     seen.add(key)
                     values.append((sentence, url))
-
                 if len(values) >= 15:
                     return values[:15]
-
         return values[:15]
 
     async def _dictionary_examples(self, word):
@@ -389,6 +332,39 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return
 
+    def _extract_web_search_examples(self, word, text, candidates, seen, source, url=""):
+        if not text:
+            return
+        text = self._clean_text(text)
+        if not text:
+            return
+
+        # Eğitim/sözlük sonuçlarında "Zarf:", "Sıfat:", "Örnek:" gibi
+        # etiketleri at; etiketten sonraki gerçek cümleyi değerlendirmeye bırak.
+        text = re.sub(
+            r"^\s*(?:zarf|sıfat|isim|fiil|edat|zamir|ünlem|örnek cümle|örnek kullanım|kullanım örneği|örnek|cümle)\s*[:\-–—]\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        # Snippet içindeki tamamlanmış cümleleri tek tek dene.
+        parts = re.split(r"(?<=[.!?])\s+", text)
+        for part in parts:
+            part = self._clean_text(part)
+            if not part or not self._contains_target_word(word, part):
+                continue
+            self._add_sentence(word, part, candidates, seen, source, url)
+            if len(candidates) >= 15:
+                return
+
+        # Tırnak içindeki örnek cümleleri ayrıca dene.
+        quoted = re.findall(r"[\"“”‘’']([^\"“”‘’']{12,220})[\"“”‘’']", text)
+        for item in quoted:
+            self._add_sentence(word, item, candidates, seen, source, url)
+            if len(candidates) >= 15:
+                return
+
     def _extract_from_text(self, word, text, candidates, seen, source, url=""):
         if not text:
             return
@@ -423,7 +399,6 @@ class CumleMotoruV2:
                 return
 
         if source == "web_sentence_research":
-            # Önce noktalama ile ayrılmış gerçek cümleleri dene.
             parts = re.split(r"(?<=[.!?])\s+", text)
             for part in parts:
                 part = part.strip()
@@ -431,7 +406,6 @@ class CumleMotoruV2:
                     self._add_sentence(word, part, candidates, seen, source, url)
                     if len(candidates) >= 15:
                         return
-
             return
 
         parts = re.split(r"(?<=[.!?])\s+|\s*[•·]\s*|\s*\*\s*", text)
@@ -444,74 +418,38 @@ class CumleMotoruV2:
         sentence = self._clean_text(sentence)
         sentence = sentence.strip(" \t\r\n-–—•·*\"'“”‘’")
 
-        # Web arama sonuçlarında açıklama/parça cümleleri gerçek kullanım
-        # cümlesi değildir. Bunları daha validation'a gelmeden ele.
         if source == "web_sentence_research":
             web_lower = sentence.casefold().replace("\u0307", "")
             if any(marker in web_lower for marker in (
-                "örnek cümle", "örnek cümle:", "örnek kullanım",
-                "anlamını", "anlamıdır", "anlamı", "sıfat olarak",
-                "isim olarak", "fiil olarak", "kelimesini içeren",
-                "kelimesinin", "nasıl kullanılır", "cümle:",
-                "cümleler", "sözlük", "türkçenin en", "türkçede",
+                "örnek cümle", "örnek cümle:", "örnek kullanım", "anlamını", "anlamıdır", "anlamı",
+                "sıfat olarak", "isim olarak", "fiil olarak", "kelimesini içeren", "kelimesinin",
+                "nasıl kullanılır", "cümle:", "cümleler", "sözlük", "türkçenin en", "türkçede",
             )):
                 return
-            if re.match(
-                r"^\s*(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}\s*[·•|:-]",
-                sentence,
-                flags=re.IGNORECASE,
-            ):
+            if re.match(r"^\s*(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}\s*[·•|:-]", sentence, flags=re.IGNORECASE):
                 return
-            # Yarım bırakılmış Bing snippetlerini kabul etme.
-            if re.search(
-                r"\b(?:kimse|ki|ise|olan|olarak|için|ve|veya|ile|bir|bu|şu|o)\s*[.!?]?$",
-                web_lower,
-            ):
-                return
-        if source == "reverso_example":
-            # Reverso/Bing sonuçlarında kelime bazen kişi adı olarak gelir
-            # (örn. "Muharrem İnce"). Hedef kelime cümle içinde özel isim
-            # biçiminde kullanılıyorsa bunu gerçek kelime kullanımı sayma.
-            target = word.casefold().replace("\u0307", "")
-            matches = list(re.finditer(
-                rf"(?<![\wçğıöşüÇĞİÖŞÜ]){re.escape(word)}(?![\wçğıöşüÇĞİÖŞÜ])",
-                sentence,
-                flags=re.IGNORECASE,
-            ))
-            if not matches:
+            if re.search(r"\b(?:kimse|ki|ise|olan|olarak|için|ve|veya|ile|bir|bu|şu|o)\s*[.!?]?}$", web_lower):
                 return
 
+        if source == "reverso_example":
+            target = word.casefold().replace("\u0307", "")
+            matches = list(re.finditer(rf"(?<![\wçğıöşüÇĞİÖŞÜ]){re.escape(word)}(?![\wçğıöşüÇĞİÖŞÜ])", sentence, flags=re.IGNORECASE))
+            if not matches:
+                return
             for match in matches:
                 matched = match.group(0).casefold().replace("\u0307", "")
                 if match.start() > 0 and matched != target:
                     return
-
-            # Hedef kelimeden hemen önceki kelime özel isim gibi başlıyorsa
-            # ve cümle bununla başlamıyorsa kişi adı olma ihtimalini ele.
             for match in matches:
                 prefix = sentence[:match.start()].strip()
                 if not prefix:
                     continue
-                previous = prefix.split()[-1].strip(
-                    ".,;:!?()[]{}\"'“”‘’"
-                )
-                common_starters = {
-                    "bu", "şu", "o", "çok", "en", "bir", "daha",
-                    "ne", "pek", "son", "ince", "fazla", "oldukça",
-                }
-                if (
-                    previous
-                    and previous[:1].isupper()
-                    and previous.casefold() not in common_starters
-                ):
+                previous = prefix.split()[-1].strip(".,;:!?()[]{}\"'“”‘’")
+                common_starters = {"bu", "şu", "o", "çok", "en", "bir", "daha", "ne", "pek", "son", "ince", "fazla", "oldukça"}
+                if previous and previous[:1].isupper() and previous.casefold() not in common_starters:
                     return
-
             reverso_lower = sentence.casefold().replace("\u0307", "")
-            if any(marker in reverso_lower for marker in (
-                "muharrem", "chp", "biyografi", "haberleri",
-                "son dakika", "milletvekili", "genel başkan",
-                "istifa etti", "partiye geçti",
-            )):
+            if any(marker in reverso_lower for marker in ("muharrem", "chp", "biyografi", "haberleri", "son dakika", "milletvekili", "genel başkan", "istifa etti", "partiye geçti")):
                 return
 
         sentence = re.sub(r"^(?:\d+\s*[.)]|[-–—•·*])\s*", "", sentence).strip()
@@ -530,8 +468,6 @@ class CumleMotoruV2:
         if len(sentence) < 12 or len(sentence) > 220:
             return False
         lower = sentence.casefold().replace("\u0307", "")
-
-        # Arama sonucu/meta başlıklarını ve açıklama parçalarını kesin olarak ele.
         if re.match(r"^\d{1,2}\s+(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}\s*[·•|:-]", sentence):
             return False
         if "..." in sentence or "…" in sentence:
@@ -544,28 +480,15 @@ class CumleMotoruV2:
             return False
         if re.search(r"\b(?:nedir|mıdır|midir|musun|misin|mısın|müsün)\s*[?!]", lower):
             return False
-        # Tek başına başlık/etiket/ürün adı gibi duran kısa parçaları reddet.
         if re.search(r"\b(?:programı|programıdır|sitesi|sitesidir|ürünü|modeli|markası|başlığı)\.?$", lower):
             return False
         if re.match(r"^(?:dünyanın|türkiye'nin|türkiye|en)\s+", lower) and len(words := re.findall(r"[a-zçğıöşüâîû]+", lower)) < 7:
             return False
-
         if any(marker in lower for marker in (
-            "kelimesi için",
-            "kelimesinin eş anlamlısı",
-            "kelimesinin anlamı",
-            "kelimesi ile ilgili cümleler",
-            "kelimesi ile ilgili",
-            "kelimesinin ile ilgili",
-            "atasözünün anlamı",
-            "doğru yazılışı:",
-            "nasıl yazılır",
-            "örnek cümle içinde kullanımı",
-            "hakkında merak edilenler",
-            "ifadesini nasıl kullan",
-            "bir işin ya da hareketin",
-            "programıdır",
-            "programı.",
+            "kelimesi için", "kelimesinin eş anlamlısı", "kelimesinin anlamı", "kelimesi ile ilgili cümleler",
+            "kelimesi ile ilgili", "kelimesinin ile ilgili", "atasözünün anlamı", "doğru yazılışı:",
+            "nasıl yazılır", "örnek cümle içinde kullanımı", "hakkında merak edilenler", "ifadesini nasıl kullan",
+            "bir işin ya da hareketin", "programıdır", "programı.",
         )):
             return False
         if not cls._contains_target_word(word, sentence):
@@ -576,8 +499,7 @@ class CumleMotoruV2:
             "kelimesi ile ilgili cümleler", "kelimesi ile ilgili", "kelimesinin ile ilgili", "bir cümlede", "örnek cümleler",
             "ifadesini nasıl kullanacağınızı", "aşağıdaki anlamlara gelebilir", "gerçek ve mecaz anlam", "mecaz anlamda",
             "cevap:", "cevabımda", "aşağıda", "örnekler vereyim", "çok anlamlılık denir", "soru çözme",
-            "mecaz anlam mıdır", "gerçek anlam mıdır", "kelimesinin anlamı", "kelimesi mecaz",
-            "http://", "https://", "www.",
+            "mecaz anlam mıdır", "gerçek anlam mıdır", "kelimesinin anlamı", "kelimesi mecaz", "http://", "https://", "www.",
         )):
             return False
         if "…" in sentence or "..." in sentence:
@@ -587,10 +509,8 @@ class CumleMotoruV2:
         if re.match(rf"^\s*{re.escape(word.casefold())}\s+(?:isim|fiil|sıfat|zarf|edat|ünlem|zamir)\s*[:\-]", lower):
             return False
         if any(marker in lower for marker in (
-            "kelimesini içeren", "çok sayıda örnek cümle",
-            "nasıl kullanılır", "yorumlarını inceleyin",
-            "günlük ped", "bio-care", "molped", "kotex",
-            "adet fiyatı", "fiyatını", "ürün", "ped ",
+            "kelimesini içeren", "çok sayıda örnek cümle", "nasıl kullanılır", "yorumlarını inceleyin",
+            "günlük ped", "bio-care", "molped", "kotex", "adet fiyatı", "fiyatını", "ürün", "ped ",
             "şampuan", "krem ", "kampanya", "satın al",
         )):
             return False
