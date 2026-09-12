@@ -134,36 +134,55 @@ class _LiteSearchParser(HTMLParser):
 
 
 class _BingSearchParser(HTMLParser):
-    """Bing HTML sonuçlarını temel başlık/snippet alanlarından toplar."""
+    """Bing HTML sonuçlarını li.b_algo içindeki h2/p alanlarından toplar."""
 
     def __init__(self):
         super().__init__()
         self.results = []
+        self._in_result = False
         self._title_active = False
         self._snippet_active = False
         self._title = ""
         self._snippet = ""
         self._url = ""
+        self._li_depth = 0
 
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
         classes = set((attrs_dict.get("class") or "").split())
-        if tag == "a" and "tilk" in classes:
+
+        if tag == "li" and "b_algo" in classes:
             self._finish_result()
-            self._title_active = True
+            self._in_result = True
+            self._li_depth = 1
             self._title = ""
             self._snippet = ""
-            self._url = attrs_dict.get("href", "")
-        elif "b_algoSlug" in classes:
-            pass
-        elif tag in ("p", "div") and "b_caption" in classes:
+            self._url = ""
+            return
+
+        if not self._in_result:
+            return
+
+        if tag == "li":
+            self._li_depth += 1
+        elif tag == "a" and self._li_depth >= 1 and not self._title:
+            # Bing normalde başlığı li.b_algo > h2 > a altında verir.
+            self._title_active = True
+            self._url = html_lib.unescape(attrs_dict.get("href", ""))
+        elif tag == "p" and self._li_depth >= 1:
             self._snippet_active = True
 
     def handle_endtag(self, tag):
+        if not self._in_result:
+            return
         if tag == "a" and self._title_active:
             self._title_active = False
-        if tag == "p" and self._snippet_active:
+        elif tag == "p" and self._snippet_active:
             self._snippet_active = False
+        elif tag == "li":
+            self._li_depth -= 1
+            if self._li_depth <= 0:
+                self._finish_result()
 
     def handle_data(self, data):
         if self._title_active:
@@ -176,15 +195,19 @@ class _BingSearchParser(HTMLParser):
         self._finish_result()
 
     def _finish_result(self):
+        if not self._in_result:
+            return
         title = _HtmlSearchParser._clean(self._title)
         snippet = _HtmlSearchParser._clean(self._snippet)
         if title:
             self.results.append({"title": title, "snippet": snippet, "url": self._url})
+        self._in_result = False
         self._title_active = False
         self._snippet_active = False
         self._title = ""
         self._snippet = ""
         self._url = ""
+        self._li_depth = 0
 
 
 class WebArastirici:
