@@ -182,7 +182,7 @@ class CumleMotoruV2:
         # yetim/onaysız cümle yok. Sonuç yoksa boş dön ve diğer kaynağa geç.
         url = (
             "https://api.tatoeba.org/v1/sentences?"
-            f"lang=tur&q={quote_plus('=' + word)}"
+            f"lang=tur&q={quote_plus(word)}"
             "&word_count=3-&is_orphan=no&is_unapproved=no"
             "&sort=relevance&limit=50"
         )
