@@ -10,6 +10,8 @@ class TestDatabase:
 
     def initialize(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.conn is not None:
+            self.close()
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript('''
@@ -57,7 +59,6 @@ class TestDatabase:
         );
         ''')
 
-        # Eski test DB'leri için güvenli, geriye dönük migration.
         columns = {
             row[1] for row in self.conn.execute(
                 "PRAGMA table_info(automatic_word_research)"
@@ -71,11 +72,15 @@ class TestDatabase:
         self.commit()
 
     def execute(self, sql, params=()):
+        if self.conn is None:
+            raise RuntimeError("Veritabanı başlatılmadı.")
         cur = self.conn.execute(sql, params)
         self.commit()
         return cur
 
     def fetchone(self, sql, params=()):
+        if self.conn is None:
+            raise RuntimeError("Veritabanı başlatılmadı.")
         row = self.conn.execute(sql, params).fetchone()
         return dict(row) if row else None
 
@@ -119,4 +124,10 @@ class TestDatabase:
             )
 
     def commit(self):
-        self.conn.commit()
+        if self.conn is not None:
+            self.conn.commit()
+
+    def close(self):
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
