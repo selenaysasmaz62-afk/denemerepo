@@ -48,11 +48,6 @@ class CumleMotoruV2:
             if len(candidates) >= 15:
                 return candidates[:15]
 
-        for sentence, url in await self._tatoeba_sentences(word):
-            self._add_sentence(word, sentence, candidates, seen, "tatoeba", url)
-            if len(candidates) >= 15:
-                return candidates[:15]
-
         for sentence, url in await self._dictionary_examples(word):
             self._add_sentence(word, sentence, candidates, seen, "dictionary_example", url)
             if len(candidates) >= 15:
@@ -325,6 +320,10 @@ class CumleMotoruV2:
         if re.match(r"^\d{1,2}\s+(?:Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+\d{4}\s*[·•|:-]", sentence):
             return False
         if "..." in sentence or "…" in sentence:
+            return False
+        if re.search(r"\b(?:gerçek|mecaz)\s+anlam\b", lower):
+            return False
+        if re.search(r"\b(?:anlamı|anlamında|anlamıyla)\b", lower) and re.search(r"\b(?:kelime|kelimesi|kelimesinin)\b", lower):
             return False
         if re.search(r"\b(?:kelimesi|kelimesinin|kelime)\b.*\b(?:cümleler|cümle|kullanımı|anlamı)\b", lower):
             return False
