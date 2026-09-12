@@ -24,7 +24,6 @@ class _HtmlSearchParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
         classes = set((attrs_dict.get("class") or "").split())
-
         if tag == "a" and "result__a" in classes:
             self._finish_result()
             self._title_active = True
@@ -32,7 +31,6 @@ class _HtmlSearchParser(HTMLParser):
             self._snippet = ""
             self._url = self._decode_url(attrs_dict.get("href", ""))
             return
-
         if "result__snippet" in classes:
             self._snippet_active = True
 
@@ -98,7 +96,6 @@ class _LiteSearchParser(HTMLParser):
         attrs_dict = dict(attrs)
         classes = set((attrs_dict.get("class") or "").split())
         href = attrs_dict.get("href", "")
-
         if tag == "a" and "result-link" in classes:
             self._finish_result()
             self._title_active = True
@@ -136,15 +133,62 @@ class _LiteSearchParser(HTMLParser):
         self._url = ""
 
 
-class WebArastirici:
-    """Anahtarsız, yedekli web araştırıcısı.
+class _BingSearchParser(HTMLParser):
+    """Bing HTML sonuçlarını temel başlık/snippet alanlarından toplar."""
 
-    Sıra:
-      1) DuckDuckGo HTML form POST
-      2) DuckDuckGo Lite form POST
-      3) DuckDuckGo Instant Answer API
-    Bir sağlayıcı sonuç vermezse diğeri denenir.
-    """
+    def __init__(self):
+        super().__init__()
+        self.results = []
+        self._title_active = False
+        self._snippet_active = False
+        self._title = ""
+        self._snippet = ""
+        self._url = ""
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        classes = set((attrs_dict.get("class") or "").split())
+        if tag == "a" and "tilk" in classes:
+            self._finish_result()
+            self._title_active = True
+            self._title = ""
+            self._snippet = ""
+            self._url = attrs_dict.get("href", "")
+        elif "b_algoSlug" in classes:
+            pass
+        elif tag in ("p", "div") and "b_caption" in classes:
+            self._snippet_active = True
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._title_active:
+            self._title_active = False
+        if tag == "p" and self._snippet_active:
+            self._snippet_active = False
+
+    def handle_data(self, data):
+        if self._title_active:
+            self._title += " " + data
+        elif self._snippet_active:
+            self._snippet += " " + data
+
+    def close(self):
+        super().close()
+        self._finish_result()
+
+    def _finish_result(self):
+        title = _HtmlSearchParser._clean(self._title)
+        snippet = _HtmlSearchParser._clean(self._snippet)
+        if title:
+            self.results.append({"title": title, "snippet": snippet, "url": self._url})
+        self._title_active = False
+        self._snippet_active = False
+        self._title = ""
+        self._snippet = ""
+        self._url = ""
+
+
+class WebArastirici:
+    """Anahtarsız, yedekli web araştırıcısı."""
 
     def __init__(self, timeout=12, max_results=8):
         self.timeout = timeout
@@ -155,18 +199,21 @@ class WebArastirici:
 
     def _search_sync(self, query):
         errors = []
-
         for endpoint, parser_cls in (
             ("https://html.duckduckgo.com/html/", _HtmlSearchParser),
             ("https://lite.duckduckgo.com/lite/", _LiteSearchParser),
+            ("https://www.bing.com/search", _BingSearchParser),
         ):
             try:
-                form = "q=" + quote_plus(query) + "&kl=tr-tr"
-                html_text = self._fetch(endpoint, data=form.encode("ascii"))
+                if "bing.com" in endpoint:
+                    url = endpoint + "?q=" + quote_plus(query) + "&setlang=tr"
+                    html_text = self._fetch(url)
+                else:
+                    form = "q=" + quote_plus(query) + "&kl=tr-tr"
+                    html_text = self._fetch(endpoint, data=form.encode("ascii"))
                 if self._looks_like_challenge(html_text):
                     errors.append(f"anti_bot:{endpoint.split('/')[2]}")
                     continue
-
                 parser = parser_cls()
                 parser.feed(html_text)
                 parser.close()
@@ -179,8 +226,7 @@ class WebArastirici:
 
         try:
             api_url = (
-                "https://api.duckduckgo.com/?q="
-                + quote_plus(query)
+                "https://api.duckduckgo.com/?q=" + quote_plus(query)
                 + "&format=json&no_html=1&skip_disambig=0"
             )
             raw = self._fetch(api_url)
@@ -190,24 +236,14 @@ class WebArastirici:
             abstract = payload.get("AbstractText") or ""
             abstract_url = payload.get("AbstractURL") or ""
             if heading or abstract:
-                results.append({
-                    "title": heading or query,
-                    "snippet": abstract,
-                    "url": abstract_url,
-                })
-
+                results.append({"title": heading or query, "snippet": abstract, "url": abstract_url})
             for item in payload.get("RelatedTopics", [])[: self.max_results]:
                 if not isinstance(item, dict):
                     continue
                 text = item.get("Text") or ""
                 first_url = item.get("FirstURL") or ""
                 if text:
-                    results.append({
-                        "title": query,
-                        "snippet": text,
-                        "url": first_url,
-                    })
-
+                    results.append({"title": query, "snippet": text, "url": first_url})
             results = self._normalize_results(results)
             if results:
                 return {"query": query, "results": results, "error": None, "provider": "duckduckgo_api"}
@@ -215,19 +251,11 @@ class WebArastirici:
         except Exception as exc:
             errors.append(f"instant_answer:{exc}")
 
-        return {
-            "query": query,
-            "results": [],
-            "error": "; ".join(errors) or "no_results",
-            "provider": None,
-        }
+        return {"query": query, "results": [], "error": "; ".join(errors) or "no_results", "provider": None}
 
     def _fetch(self, url, data=None):
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 "
-                "Chrome/120 Mobile Safari/537.36"
-            ),
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
             "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.7",
             "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
         }
@@ -247,11 +275,8 @@ class WebArastirici:
     @staticmethod
     def _looks_like_challenge(text):
         lower = text.casefold()
-        return (
-            ("captcha" in lower or "are you a human" in lower or "unusual traffic" in lower)
-            and "result__a" not in lower
-            and "result-link" not in lower
-        )
+        return (("captcha" in lower or "are you a human" in lower or "unusual traffic" in lower)
+                and "result__a" not in lower and "result-link" not in lower and "b_algo" not in lower)
 
     def _normalize_results(self, items):
         results = []
