@@ -21,12 +21,14 @@ class KelimeArastirmaMotoru:
     _USAGE_JUNK = (
         "bir cümlede ", "ifadesini nasıl kullanacağınızı",
         "kelimesini içeren çok sayıda", "kelimesi ile ilgili",
-        "kelimesinin ile ilgili", "örnek cümleler vereyim",
+        "kelimesinin ile ilgili", "kelimesinin hem gerçek anlamı",
+        "kelimesinin hem mecaz anlamı", "örnek cümleler vereyim",
         "örnek cümleleri", "gerçek ve mecaz anlam",
         "aşağıda her iki anlamı", "kullanım bağlamına göre",
         "gövde anlamlar", "incehesap.com", "muharrem ince",
         "resmi web sitesidir", "erişim tarihi", "kendinize meydan okuyun",
-        "daha hafif bir modelden",
+        "daha hafif bir modelden", "bu cümlede ",
+        "cümlede “", "cümlede \"",
     )
 
     def __init__(self):
