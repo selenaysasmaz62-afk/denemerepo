@@ -19,6 +19,12 @@ class CumleMotoruV2:
     async def research(self, word, research, usage):
         candidates, seen = [], set()
 
+        if isinstance(usage, dict):
+            for sentence in usage.get("contexts", []) or []:
+                self._add_sentence(word, sentence, candidates, seen, "usage_research", "")
+                if len(candidates) >= 15:
+                    return candidates[:15]
+
         for sentence, url in await self._tatoeba_sentences(word):
             self._add_sentence(word, sentence, candidates, seen, "tatoeba", url)
             if len(candidates) >= 15:
@@ -83,12 +89,13 @@ class CumleMotoruV2:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=6)
             if process.returncode != 0 or not stdout:
                 return None
-            results = _BingSearchParser().parse(
-                stdout.decode("utf-8", errors="replace"), url
-            )
+            parser = _BingSearchParser()
+            parser.feed(stdout.decode("utf-8", errors="replace"))
+            parser.close()
+            results = parser.results[:8]
             return {
                 "query": query,
-                "results": results[:8],
+                "results": results,
                 "error": None,
                 "provider": "https://www.bing.com/search",
             }
