@@ -7,7 +7,7 @@ import re
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
-from arastirma.web_arastirici import WebArastirici
+from arastirma.web_arastirici import WebArastirici, _BingSearchParser
 
 
 class KelimeArastirmaMotoru:
@@ -55,18 +55,35 @@ class KelimeArastirmaMotoru:
         senses = self._build_senses(word, ranked)
         return {"word": word, "senses": senses, "meanings": [s["definition"] for s in senses][:12], "sources": ranked[:12]}
 
+    async def _usage_web_search(self, query):
+        """Tek Bing isteğini ayrı süreçte çalıştırır; ağ kilitlenirse event loop kapanmaz."""
+        url = "https://www.bing.com/search?q=" + quote_plus(query) + "&setlang=tr"
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "curl", "-L", "--silent", "--show-error", "--max-time", "5",
+                "-A", "FatosKelimeOgrenmeTest/1.0", url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=6)
+            if process.returncode != 0 or not stdout:
+                return None
+            results = _BingSearchParser().parse(stdout.decode("utf-8", errors="replace"), url)
+            return {"query": query, "results": results[:8], "error": None, "provider": "https://www.bing.com/search"}
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            return None
+
     async def research_usage(self, word, research):
         contexts = []
         patterns = []
         seen = set()
         query = f'"{word}" "örnek cümle"'
 
-        # Usage araştırmasında to_thread kullanılmıyor. Böylece asyncio.run()
-        # kapanırken iptal edilemeyen arka plan thread'leri süreci kilitlemiyor.
-        try:
-            data = self.web._search_sync(query)
-        except Exception:
-            data = None
+        data = await self._usage_web_search(query)
 
         if isinstance(data, dict):
             self._append_contexts(contexts, seen, data.get("results", []), word)
