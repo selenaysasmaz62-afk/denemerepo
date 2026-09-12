@@ -52,11 +52,6 @@ class CumleMotoruV2:
                         continue
                     self._extract_from_text(word, snippet, candidates, seen, "web_sentence_research", url)
 
-                    # Snippet gerçek örneği taşımıyorsa sayfanın kendisini oku.
-                    if len(candidates) < 6 and url:
-                        page_text = await asyncio.to_thread(self._fetch_html_text, url)
-                        self._extract_from_text(word, page_text, candidates, seen, "web_page_sentence_research", url)
-
                     if len(candidates) >= 15:
                         return candidates[:15]
 
